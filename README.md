@@ -153,6 +153,55 @@ curl -X POST http://localhost:8000/chat \
 {"detail":[{"type":"missing","loc":["body","message"],"msg":"Field required","input":{},"url":"https://errors.pydantic.dev/2.5/v/missing"}]}
 ```
 
+## 認証機能
+
+### 認証方式
+- **Bearer Token認証**: `Authorization: Bearer <supabase-token>`ヘッダーを使用
+- **Supabase認証**: Supabaseの認証システムと連携
+- **自動トークン検証**: リクエスト時にトークンの有効性を自動検証
+
+### 認証が必要なエンドポイント
+- `POST /chat` - チャット機能（認証必須）
+
+### 認証テスト
+
+#### 認証なし（401エラー）
+```bash
+curl -X POST http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "こんにちは、Morizo！"}'
+```
+
+期待される応答（エラー）：
+```json
+{"detail":"Not authenticated"}
+```
+
+#### 認証あり（正常動作）
+```bash
+curl -X POST http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <supabase-token>" \
+  -d '{"message": "こんにちは、Morizo！"}'
+```
+
+期待される応答：
+```json
+{
+  "response": "こんにちは！Morizoです。今日はどんな食材を管理したり、レシピを提案したりしましょうか？何かお手伝いできることがあれば教えてくださいね！",
+  "success": true,
+  "model_used": "gpt-4o-mini",
+  "user_id": "user-uuid-here"
+}
+```
+
+### 認証フロー
+1. **トークン取得**: Next.js側でSupabase認証からトークンを取得
+2. **API呼び出し**: `Authorization: Bearer <token>`ヘッダーでAPIを呼び出し
+3. **トークン検証**: Python側でSupabaseの`getUser(token)`でトークンを検証
+4. **ユーザー情報取得**: 認証成功時にユーザー情報を取得
+5. **レスポンス**: ユーザーID付きでレスポンスを返却
+
 ## トラブルシューティング
 
 ### よくあるエラーと解決方法

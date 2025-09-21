@@ -1,6 +1,9 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from openai import OpenAI
+from supabase import create_client, Client
 import os
 from typing import Optional
 from dotenv import load_dotenv
@@ -10,23 +13,71 @@ load_dotenv()
 
 app = FastAPI(title="Morizo AI", description="Smart Pantry AI Agent")
 
+# CORS設定
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 本番環境では適切なドメインに制限
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # OpenAI API設定
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
+# Supabase設定
+supabase_url = os.getenv("SUPABASE_URL")
+supabase_key = os.getenv("SUPABASE_KEY")
+supabase: Client = create_client(supabase_url, supabase_key) if supabase_url and supabase_key else None
+
 # サーバー起動時にモデル情報を表示
 print(f"🚀 Morizo AI Server starting...")
 print(f"📋 Using OpenAI Model: {model_name}")
-print(f"🔑 API Key configured: {'Yes' if os.getenv('OPENAI_API_KEY') else 'No'}")
+print(f"🔑 OpenAI API Key configured: {'Yes' if os.getenv('OPENAI_API_KEY') else 'No'}")
+print(f"🔐 Supabase configured: {'Yes' if supabase else 'No'}")
+
+# 認証設定
+security = HTTPBearer()
+
+async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """
+    Supabaseトークンを検証し、ユーザー情報を返す
+    """
+    if not supabase:
+        raise HTTPException(
+            status_code=500, 
+            detail="Supabase not configured"
+        )
+    
+    try:
+        # トークンからユーザー情報を取得
+        response = supabase.auth.get_user(credentials.credentials)
+        
+        if response.user is None:
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid authentication token"
+            )
+        
+        return response.user
+    except Exception as e:
+        raise HTTPException(
+            status_code=401,
+            detail=f"Authentication failed: {str(e)}"
+        )
 
 class ChatRequest(BaseModel):
     message: str
     user_id: Optional[str] = None
 
 class ChatResponse(BaseModel):
+    model_config = {"protected_namespaces": ()}
+    
     response: str
     success: bool
     model_used: str
+    user_id: Optional[str] = None
 
 @app.get("/")
 async def root():
@@ -37,7 +88,7 @@ async def health_check():
     return {"status": "healthy", "service": "Morizo AI"}
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, current_user = Depends(verify_token)):
     """
     ユーザーのメッセージをLLMに送信し、レスポンスを返す
     """
@@ -63,7 +114,8 @@ async def chat(request: ChatRequest):
         return ChatResponse(
             response=ai_response,
             success=True,
-            model_used=actual_model
+            model_used=actual_model,
+            user_id=current_user.id
         )
         
     except Exception as e:
