@@ -109,6 +109,9 @@ pip install --upgrade gotrue supafunc --break-system-packages
 # 4. 段階的依存関係解決（必要に応じて）
 pip install --upgrade realtime --break-system-packages
 pip install --upgrade websockets --break-system-packages
+
+# 5. FastMCPのインストール（MCPサーバー用）
+pip install fastmcp>=0.1.0
 ```
 
 ### 更新されたパッケージバージョン
@@ -123,11 +126,35 @@ pip install --upgrade websockets --break-system-packages
 - **supafunc**: 0.3.3 → 0.10.2
 - **realtime**: 1.0.6 → 2.19.0
 - **websockets**: 12.0 → 15.0.1
+- **fastmcp**: 新規インストール 2.12.3
 
 ### 段階的解決の成功例
 1. **realtime**: `AuthorizationError` インポートエラー → 2.19.0に更新で解決
 2. **websockets**: `websockets.asyncio` インポートエラー → 15.0.1に更新で解決
-3. **負のスパイラル回避**: 個別パッケージ更新で全体の安定性を維持
+3. **fastmcp**: 依存関係解決後、FastMCP 2.12.3で正常動作
+4. **負のスパイラル回避**: 個別パッケージ更新で全体の安定性を維持
+
+## 🎉 MCPサーバーの動作確認
+
+**2025年9月21日** - Supabase MCPサーバーが完全動作！
+
+### MCPサーバーの起動
+```bash
+# Supabase MCPサーバーを起動
+python supabase_mcp_server.py
+```
+
+### MCPサーバーのテスト
+```bash
+# 包括テストの実行
+python test_supabase_with_mcp.py
+```
+
+### 成功した機能
+- ✅ **5つのCRUDツール**: inventory_add, inventory_list, inventory_get, inventory_update, inventory_delete
+- ✅ **Supabase認証**: JWT トークン認証
+- ✅ **HTTPトランスポート**: 安定した接続
+- ✅ **実績のある方法**: アノテーション削除、明示的登録
 
 ## 開発コマンド
 
