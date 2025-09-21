@@ -54,19 +54,22 @@ curl http://localhost:8000/health
 
 ## ドキュメント
 
-- **[詳細セットアップ](docs/SETUP.md)** - セットアップ手順
+- **[詳細セットアップ](docs/SETUP.md)** - セットアップ手順（MCP依存関係問題の解決手順含む）
 - **[API仕様](docs/API.md)** - エンドポイント詳細
 - **[認証機能](docs/AUTHENTICATION.md)** - 認証システム
 - **[アーキテクチャ](docs/ARCHITECTURE.md)** - システム設計
 - **[開発ロードマップ](docs/ROADMAP.md)** - 開発計画・ToDo
+- **[MCP作成フロー](docs/MAKINGMCP.md)** - MCPサーバー実装手順
 
 ## 技術スタック
 
-- **フレームワーク**: FastAPI
+- **フレームワーク**: FastAPI 0.117.1
 - **言語**: Python 3.11+
-- **AI/ML**: OpenAI API (GPT-4, Whisper)
-- **データベース**: Supabase PostgreSQL
+- **AI/ML**: OpenAI API 1.108.1 (GPT-4, Whisper)
+- **データベース**: Supabase PostgreSQL 2.19.0
 - **認証**: Supabase Auth
+- **MCP**: Micro-Agent Communication Protocol 1.14.1
+- **HTTP**: httpx 0.28.1
 
 ## 関連リポジトリ
 

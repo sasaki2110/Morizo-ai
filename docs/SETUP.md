@@ -85,11 +85,61 @@ uvicorn main:app --reload --port 8000
    - 原因: `httpx`と`openai`ライブラリのバージョン互換性の問題
    - 解決: `requirements.txt`で`httpx>=0.24.0,<0.25.0`を指定し、`pip install -r requirements.txt --force-reinstall`を実行
 
+5. **MCP依存関係の競合エラー**
+   - 原因: MCPライブラリが最新版のhttpx/anyioを要求するが、他のライブラリが古いバージョンを要求
+   - 解決: 全パッケージを最新版に更新（下記「MCP対応の依存関係更新」を参照）
+
+## MCP対応の依存関係更新
+
+### 問題の背景
+MCP（Micro-Agent Communication Protocol）ライブラリは最新のhttpx/anyioを要求するが、従来のライブラリ（fastapi, openai, supabase）は古いバージョンを要求するため、依存関係の競合が発生。
+
+### 解決手順
+
+```bash
+# 1. 仮想環境をクリーンアップ
+pip uninstall -y fastapi uvicorn openai httpx supabase mcp anyio
+
+# 2. 最新版で再インストール
+pip install -r requirements.txt
+
+# 3. 残りの競合パッケージを更新
+pip install --upgrade gotrue supafunc --break-system-packages
+
+# 4. 段階的依存関係解決（必要に応じて）
+pip install --upgrade realtime --break-system-packages
+pip install --upgrade websockets --break-system-packages
+```
+
+### 更新されたパッケージバージョン
+- **fastapi**: 0.104.1 → 0.117.1
+- **uvicorn**: 0.24.0 → 0.36.0
+- **openai**: 1.3.0 → 1.108.1
+- **httpx**: 0.24.1 → 0.28.1
+- **supabase**: 2.0.0 → 2.19.0
+- **mcp**: 新規インストール 1.14.1
+- **anyio**: 新規インストール 4.10.0
+- **gotrue**: 1.3.1 → 2.12.4
+- **supafunc**: 0.3.3 → 0.10.2
+- **realtime**: 1.0.6 → 2.19.0
+- **websockets**: 12.0 → 15.0.1
+
+### 段階的解決の成功例
+1. **realtime**: `AuthorizationError` インポートエラー → 2.19.0に更新で解決
+2. **websockets**: `websockets.asyncio` インポートエラー → 15.0.1に更新で解決
+3. **負のスパイラル回避**: 個別パッケージ更新で全体の安定性を維持
+
 ## 開発コマンド
 
 ```bash
 # FastAPIサーバーの起動
 uvicorn main:app --reload --port 8000
+
+# MCPサーバーの起動
+python supabase_mcp_server.py
+
+# Supabase接続テスト
+python test_supabase_connection.py
 
 # テストの実行
 pytest
