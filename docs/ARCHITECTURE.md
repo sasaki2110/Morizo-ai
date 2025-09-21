@@ -1,0 +1,100 @@
+# Morizo AI - アーキテクチャ設計
+
+## 全体アーキテクチャ
+
+```
+Morizo AI Agent (main.py)
+├── Perception MCP (音声認識、テキスト解析)
+├── Cognition MCP (思考・判断・計画)
+├── Action MCP (Supabase CRUD、Web検索、レシピ生成)
+└── Memory MCP (RAG、履歴管理)
+```
+
+## AI Agent基本ループ
+
+### Perception（認識）
+- 音声入力の認識
+- テキスト意図の解析
+- コンテキスト理解
+
+### Cognition（思考）
+- 意図の判断
+- 適切なツールの選択
+- 行動計画の立案
+
+### Action（行動）
+- Supabase CRUD操作
+- レシピ生成・提案
+- Web検索実行
+- レスポンス生成
+
+## MCP設計思想
+
+### stdio通信による軽量実装
+- HTTPサーバー不要
+- ローカル通信のみ
+- 設定が簡単
+
+### モジュラー設計
+- 各機能を独立したMCPサーバーとして分離
+- 必要な分だけMCPサーバーを追加
+- 個別にテスト可能
+
+### スケーラブルな拡張性
+- 新しいツールの追加が容易
+- プラグインシステム
+- カスタムツール対応
+
+## 技術スタック
+
+### バックエンド
+- **FastAPI**: メインAPIサーバー
+- **OpenAI API**: LLM・音声認識
+- **Supabase**: 認証・データベース
+- **FastMCP**: MCPサーバー実装
+
+### フロントエンド
+- **Next.js**: Webアプリケーション
+- **Supabase Auth**: 認証管理
+- **Web Speech API**: 音声入力
+
+## データフロー
+
+1. **音声入力** → Web Speech API → テキスト変換
+2. **テキスト解析** → Perception MCP → 意図理解
+3. **思考・判断** → Cognition MCP → ツール選択
+4. **行動実行** → Action MCP → Supabase CRUD
+5. **レスポンス生成** → LLM → 自然な応答
+
+## セキュリティ設計
+
+### 認証・認可
+- Supabase認証システム
+- Bearer Token認証
+- Row Level Security (RLS)
+
+### データ保護
+- ユーザー別データ分離
+- API権限管理
+- データ暗号化
+
+## 拡張性
+
+### Phase 1: 基本機能
+- 単純なチャット機能
+- 基本的なCRUD操作
+
+### Phase 2: MCP化
+- モジュラー設計
+- ツール分離
+- 設定管理
+
+### Phase 3: AI Agent
+- 自動ツール選択
+- 状態管理
+- 学習機能
+
+### Phase 4: 高度な機能
+- プラグインシステム
+- 外部API連携
+- カスタマイズ機能
