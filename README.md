@@ -60,6 +60,7 @@ curl http://localhost:8000/health
 - **[アーキテクチャ](docs/ARCHITECTURE.md)** - システム設計
 - **[開発ロードマップ](docs/ROADMAP.md)** - 開発計画・ToDo
 - **[MCP作成フロー](docs/MAKINGMCP.md)** - MCPサーバー実装手順
+- **[LangChain統合フロー](docs/MAKINGLG.md)** - LangChain統合実装手順
 
 ## 技術スタック
 
@@ -73,18 +74,20 @@ curl http://localhost:8000/health
 
 ## 🎉 最新の成果
 
-**2025年9月21日** - Supabase MCPサーバーの完全動作を確認！
+**2025年9月22日** - MCP統合とmain.py統合が完全完了！
 
 ### ✅ 実装完了
 - **FastMCP 2.12.3**でMCPサーバー構築
 - **5つのCRUDツール**が正常動作
 - **Supabase認証**と**データベース操作**が統合
-- **HTTPトランスポート**で安定した接続
+- **stdio接続**で軽量動作
+- **main.pyへの統合**完了
+- **自然言語での在庫管理**が実現
 
 ### 🚀 次のステップ
-- stdio接続への移行
-- main.pyへの統合
-- 本格的な運用開始
+- **LangChain統合**による高度なAI Agent化
+- **レシピ提案機能**の追加
+- **動的ツール選択**の実装
 
 ## 関連リポジトリ
 
@@ -94,7 +97,7 @@ curl http://localhost:8000/health
 ## 開発状況
 
 - ✅ **Phase 1**: 基本機能（完了）
-- 🔄 **Phase 2**: MCP化（進行中）
-- 🚀 **Phase 3**: AI Agent Loop（計画中）
+- ✅ **Phase 2**: MCP化（完了）
+- 🔄 **Phase 3**: LangChain統合（進行中）
 
-詳細は[開発ロードマップ](docs/ROADMAP.md)をご確認ください。
+詳細は[開発ロードマップ](docs/ROADMAP.md)と[LangChain統合フロー](docs/MAKINGLG.md)をご確認ください。

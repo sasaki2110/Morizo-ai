@@ -2,12 +2,30 @@
 
 ## 全体アーキテクチャ
 
+### **現在のアーキテクチャ（MCP統合完了）**
 ```
 Morizo AI Agent (main.py)
-├── Perception MCP (音声認識、テキスト解析)
-├── Cognition MCP (思考・判断・計画)
-├── Action MCP (Supabase CRUD、Web検索、レシピ生成)
-└── Memory MCP (RAG、履歴管理)
+├── FastAPI Server
+├── MCP Client (stdio接続)
+├── Supabase CRUD MCP Server
+│   ├── inventory_add
+│   ├── inventory_list
+│   ├── inventory_get
+│   ├── inventory_update
+│   └── inventory_delete
+└── Supabase PostgreSQL
+```
+
+### **目標アーキテクチャ（LangChain統合）**
+```
+Morizo AI Agent (main.py)
+├── FastAPI Server
+├── LangChain ReAct Agent
+│   ├── Tool Selection
+│   ├── MCP Tools (LangChain化)
+│   └── Recipe Tools
+├── MCP Server (stdio接続)
+└── Supabase PostgreSQL
 ```
 
 ## AI Agent基本ループ
@@ -84,12 +102,19 @@ Morizo AI Agent (main.py)
 - 単純なチャット機能
 - 基本的なCRUD操作
 
-### Phase 2: MCP化
+### Phase 2: MCP化 ✅ **完了**
 - モジュラー設計
 - ツール分離
-- 設定管理
+- stdio接続
+- main.py統合
 
-### Phase 3: AI Agent
+### Phase 3: LangChain統合 🔄 **進行中**
+- ReAct Agent
+- 動的ツール選択
+- 自然言語理解
+- レシピ提案機能
+
+### Phase 4: AI Agent
 - 自動ツール選択
 - 状態管理
 - 学習機能
