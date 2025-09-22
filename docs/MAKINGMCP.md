@@ -299,6 +299,143 @@ console.log('Access Token:', session?.access_token);
 
 ### 🚀 次のステップ
 
+## 🎉 stdio接続のMCPサーバー実装完了！
+
+**2025年9月22日** - stdio接続のMCPサーバーが完全動作！
+
+### ✅ 実装されたstdio版サーバー
+
+#### **ファイル構成**
+- **`supabase_mcp_server_stdio.py`** - stdio接続のMCPサーバー
+- **`test_supabase_mcp_stdio.py`** - テストファイル（自動起動機能付き）
+
+#### **stdio接続の特徴**
+```python
+# stdio接続での起動
+if __name__ == "__main__":
+    mcp.run(transport="stdio")
+```
+
+#### **自動起動機能**
+```python
+# テストクライアントからサーバーを自動起動
+server_params = StdioServerParameters(
+    command="python",
+    args=["supabase_mcp_server_stdio.py"]
+)
+
+async with stdio_client(server_params) as (read, write):
+    async with ClientSession(read, write) as session:
+        # テスト実行
+```
+
+### 🆚 全方式の比較
+
+| 項目 | HTTP版（明示的） | HTTP版（アノテーション） | stdio版（アノテーション） |
+|------|------------------|-------------------------|---------------------------|
+| ツール登録 | `mcp.tool(func)` | `@mcp.tool()` | `@mcp.tool()` |
+| 接続方式 | HTTP | HTTP | stdio |
+| ポート | 8001 | 8002 | 不要 |
+| 起動方法 | 手動 | 手動 | **自動** |
+| 軽量性 | ❌ HTTPサーバー必要 | ❌ HTTPサーバー必要 | ✅ **軽量** |
+| 統合性 | ❌ ネットワーク依存 | ❌ ネットワーク依存 | ✅ **ローカル** |
+| 公式準拠 | ❌ 独自実装 | ✅ チュートリアル準拠 | ✅ **チュートリアル準拠** |
+| 動作確認 | ✅ 実績あり | ✅ 完全動作 | ✅ **完全動作** |
+
+### 🧪 stdio版テスト結果
+
+#### **完全なCRUD操作テスト**
+```
+🚀 Supabase MCP Server (stdio transport) テスト開始
+🧪 FastMCPサーバー（stdio接続）包括テスト開始
+🔗 stdio接続でテストします
+
+╭───────────────────────────────────────────────────────────────────────╮
+│                             FastMCP  2.0                              │
+│               🖥️  Server name:     Supabase CRUD Server                │
+│               📦 Transport:       STDIO                               │
+│               🏎️  FastMCP version: 2.12.3                              │
+│               🤝 MCP SDK version: 1.14.1                              │
+╰───────────────────────────────────────────────────────────────────────╯
+
+✅ FastMCPサーバー（stdio接続）接続成功
+📡 利用可能ツール数: 5
+
+📦 在庫追加テスト... ✅ 在庫追加成功
+📋 在庫一覧取得テスト... ✅ 在庫一覧取得成功: 1件
+🔍 在庫取得テスト... ✅ 在庫取得成功
+✏️ 在庫更新テスト... ✅ 在庫更新成功
+🗑️ 在庫削除テスト... ✅ 在庫削除成功
+🎉 全テスト完了！
+```
+
+#### **成功した技術要素**
+- ✅ **FastMCP 2.12.3**: 最新版で正常動作
+- ✅ **stdio接続**: プロセス間通信で安定接続
+- ✅ **自動起動**: テストクライアントがサーバーを自動起動
+- ✅ **アノテーション方式**: `@mcp.tool()` デコレータ
+- ✅ **Supabase認証**: JWT トークン認証が正常動作
+- ✅ **CRUD操作**: 全操作が正常に実行
+- ✅ **軽量性**: HTTPサーバー不要
+
+### 🔧 stdio接続の技術的利点
+
+#### **1. 軽量性**
+```python
+# HTTP版（重い）
+mcp.run(transport="http", host="0.0.0.0", port=8002, path="/mcp")
+
+# stdio版（軽量）
+mcp.run(transport="stdio")
+```
+
+#### **2. 自動起動**
+```python
+# 手動起動（HTTP版）
+# ターミナル1: python supabase_mcp_server2.py
+# ターミナル2: python test_supabase_mcp_server2.py
+
+# 自動起動（stdio版）
+python test_supabase_mcp_stdio.py  # サーバーも自動起動
+```
+
+#### **3. ローカル通信**
+- **HTTP版**: ネットワーク通信が必要
+- **stdio版**: プロセス間通信のみ
+
+### 🎯 最終推奨事項
+
+**stdio版（`supabase_mcp_server_stdio.py`）を最優先推奨**
+
+理由：
+- ✅ **軽量**: HTTPサーバー不要
+- ✅ **自動起動**: 手動起動が不要
+- ✅ **ローカル**: ネットワーク通信不要
+- ✅ **統合**: main.pyへの組み込みが容易
+- ✅ **公式準拠**: アノテーション方式
+- ✅ **完全動作**: 全CRUD操作が正常動作
+- ✅ **開発効率**: テスト時の手動起動が不要
+
+### 📋 stdio版使用方法
+
+#### **1. テスト実行（サーバー自動起動）**
+```bash
+python test_supabase_mcp_stdio.py
+```
+
+#### **2. サーバーの単体起動（デバッグ用）**
+```bash
+python supabase_mcp_server_stdio.py
+```
+
+#### **3. トークン取得（Next.js側）**
+```javascript
+const { data: { session } } = await supabase.auth.getSession();
+console.log('Access Token:', session?.access_token);
+```
+
+### 🚀 次のステップ
+
 ## 📚 参考資料
 
 - [FastMCP Documentation](https://github.com/pydantic/fastmcp)
