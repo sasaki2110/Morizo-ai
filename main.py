@@ -1,3 +1,13 @@
+"""
+Morizo AI - Smart Pantry AI Agent
+Copyright (c) 2024 Morizo AI Project. All rights reserved.
+
+This software is proprietary and confidential. Unauthorized copying, modification,
+distribution, or use is strictly prohibited without explicit written permission.
+
+For licensing inquiries, contact: [contact@morizo-ai.com]
+"""
+
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware

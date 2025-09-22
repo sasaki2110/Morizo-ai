@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 """
+Morizo AI - Database MCP Server
+Copyright (c) 2024 Morizo AI Project. All rights reserved.
+
+This software is proprietary and confidential. Unauthorized copying, modification,
+distribution, or use is strictly prohibited without explicit written permission.
+
+For licensing inquiries, contact: [contact@morizo-ai.com]
+
 Database MCP Server (stdio transport)
 DB操作用のMCPサーバー（アノテーション方式、stdio接続）
 """
