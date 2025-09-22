@@ -128,20 +128,9 @@ class ChatResponse(BaseModel):
     model_used: str
     user_id: Optional[str] = None
 
-class InventoryRequest(BaseModel):
-    item_name: str
-    quantity: float
-    unit: str = "個"
-    storage_location: str = "冷蔵庫"
-    expiry_date: Optional[str] = None
-
-class InventoryUpdateRequest(BaseModel):
-    item_id: str
-    item_name: Optional[str] = None
-    quantity: Optional[float] = None
-    unit: Optional[str] = None
-    storage_location: Optional[str] = None
-    expiry_date: Optional[str] = None
+# 動的MCPエージェントがすべての在庫操作を処理するため、
+# 個別のPydanticモデルは不要になりました。
+# すべての操作は /chat エンドポイント経由で自然言語で実行されます。
 
 @app.get("/")
 async def root():
@@ -154,74 +143,177 @@ async def health_check():
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest, auth_data = Depends(verify_token)):
     """
-    ユーザーのメッセージをLLMに送信し、レスポンスを返す
+    Morizo AI ReAct Agent - 観察→思考→決定→行動のループでユーザーメッセージを処理
     """
     try:
         current_user = auth_data["user"]
         raw_token = auth_data["raw_token"]
         
-        print(f"\n🔍 [DEBUG] Chat request received:")
+        print(f"\n=== Morizo AI ReAct Agent 開始 ===")
+        print(f"🔍 [観察] ユーザー入力: {request.message}")
         print(f"   User: {current_user.email}")
-        print(f"   Message: {request.message}")
         print(f"   User ID: {current_user.id}")
         
         if not os.getenv("OPENAI_API_KEY"):
             raise HTTPException(status_code=500, detail="OpenAI API key not configured")
         
-        # 在庫管理関連のキーワードをチェック
-        inventory_keywords = ["追加", "加える", "入れる", "在庫", "冷蔵庫", "冷凍庫", "牛乳", "卵", "肉", "野菜", "果物"]
-        is_inventory_request = any(keyword in request.message for keyword in inventory_keywords)
+        # === 思考フェーズ ===
+        print(f"🧠 [思考] MCPサーバーから動的にツールリストを取得中...")
         
-        print(f"🔍 [DEBUG] Inventory keywords detected: {is_inventory_request}")
+        # MCPサーバーから動的にツールリストを取得
+        available_tools = []
+        try:
+            async with stdio_client(mcp_client.server_params) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    
+                    # ツールリストを取得
+                    tools_response = await session.list_tools()
+                    
+                    if tools_response and hasattr(tools_response, 'tools'):
+                        for tool in tools_response.tools:
+                            available_tools.append(f"- {tool.name}: {tool.description}")
+                    
+                    print(f"🧠 [思考] 利用可能なツール: {len(available_tools)}個")
+                    
+        except Exception as e:
+            print(f"❌ [エラー] ツールリスト取得失敗: {str(e)}")
+            # フォールバック: 基本的なツールリスト
+            available_tools = [
+                "- inventory_list: 在庫一覧を取得",
+                "- inventory_add: 在庫にアイテムを追加",
+                "- inventory_get: 特定のアイテムの詳細を取得",
+                "- inventory_update: 在庫アイテムを更新",
+                "- inventory_delete: 在庫アイテムを削除"
+            ]
         
-        if is_inventory_request:
-            print(f"🔍 [DEBUG] Attempting to parse inventory request...")
+        # LLMにツール選択を依頼
+        tools_list = "\n".join(available_tools)
+        tool_selection_prompt = f"""
+あなたはMorizoというスマートパントリーアシスタントです。
+ユーザーの要求を分析し、適切なツールを選択してください。
+
+利用可能なツール:
+{tools_list}
+- llm_chat: 一般的な会話や質問
+
+ユーザーの要求: "{request.message}"
+
+以下のJSON形式で回答してください:
+{{
+    "tool": "ツール名",
+    "reasoning": "選択理由",
+    "parameters": {{
+        "item_name": "アイテム名（該当する場合）",
+        "quantity": 数量（該当する場合）,
+        "unit": "単位（該当する場合）",
+        "storage_location": "保管場所（該当する場合）"
+    }}
+}}
+"""
+        
+        try:
+            tool_response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": tool_selection_prompt}],
+                max_tokens=200,
+                temperature=0.1
+            )
             
-            # 簡単な在庫追加のパターンマッチング
-            if "牛乳" in request.message and ("追加" in request.message or "加える" in request.message or "入れる" in request.message):
-                print(f"🔍 [DEBUG] Detected milk addition request")
+            tool_decision = tool_response.choices[0].message.content
+            print(f"🧠 [思考] LLM判断: {tool_decision}")
+            
+            # JSON解析
+            import json
+            try:
+                tool_data = json.loads(tool_decision)
+                selected_tool = tool_data.get("tool", "llm_chat")
+                reasoning = tool_data.get("reasoning", "")
+                parameters = tool_data.get("parameters", {})
                 
-                # 数量を抽出（簡単なパターン）
-                import re
-                quantity_match = re.search(r'(\d+)本', request.message)
-                quantity = float(quantity_match.group(1)) if quantity_match else 2.0
+                print(f"🎯 [決定] 選択されたツール: {selected_tool}")
+                print(f"🎯 [決定] 理由: {reasoning}")
                 
-                print(f"🔍 [DEBUG] Extracted quantity: {quantity}")
+            except json.JSONDecodeError:
+                print(f"⚠️ [警告] JSON解析失敗、LLMチャットを使用")
+                selected_tool = "llm_chat"
+                parameters = {}
                 
-                # MCP経由で在庫追加を試行
-                try:
-                    print(f"🔍 [DEBUG] Using token: {raw_token[:50]}...")
-                    mcp_result = await mcp_client.call_tool(
-                        "inventory_add",
-                        arguments={
-                            "token": raw_token,  # 生のJWTトークンを使用
-                            "item_name": "牛乳",
-                            "quantity": quantity,
-                            "unit": "本",
-                            "storage_location": "冷蔵庫"
-                        }
-                    )
+        except Exception as e:
+            print(f"❌ [エラー] LLM呼び出し失敗: {str(e)}")
+            selected_tool = "llm_chat"
+            parameters = {}
+        
+        # === 行動フェーズ ===
+        print(f"🔍 [行動] {selected_tool}を実行中...")
+        
+        if selected_tool == "llm_chat":
+            print(f"🔍 [行動] LLMチャットを実行")
+            ai_response = await get_llm_response(request.message, current_user)
+            
+        elif selected_tool != "llm_chat":
+            print(f"🔍 [行動] MCPで{selected_tool}を実行")
+            try:
+                # 動的にMCPツールを呼び出し
+                mcp_arguments = {"token": raw_token}
+                
+                # LLMが抽出したパラメータを追加
+                if parameters:
+                    mcp_arguments.update(parameters)
+                
+                print(f"🔍 [行動] 引数: {mcp_arguments}")
+                
+                mcp_result = await mcp_client.call_tool(
+                    selected_tool,
+                    arguments=mcp_arguments
+                )
+                
+                if mcp_result.get("success"):
+                    print(f"✅ [成功] {selected_tool}実行完了")
                     
-                    print(f"🔍 [DEBUG] MCP result: {mcp_result}")
-                    
-                    if mcp_result.get("success"):
-                        print(f"✅ [SUCCESS] Inventory added successfully")
-                        ai_response = f"牛乳を{quantity}本、冷蔵庫に追加しました！在庫管理が完了しました。"
-                    else:
-                        print(f"❌ [ERROR] MCP failed: {mcp_result.get('error')}")
-                        ai_response = f"申し訳ありません。在庫の追加でエラーが発生しました: {mcp_result.get('error')}"
+                    # 動的な結果処理
+                    if mcp_result.get("data"):
+                        # データがある場合は、LLMに結果を整形してもらう
+                        data_str = json.dumps(mcp_result["data"], ensure_ascii=False, indent=2)
+                        formatting_prompt = f"""
+以下の{selected_tool}の実行結果を、ユーザーにとって分かりやすい日本語で整形してください。
+
+実行結果:
+{data_str}
+
+ユーザーの要求: "{request.message}"
+
+自然で親しみやすい日本語で回答してください。
+"""
                         
-                except Exception as mcp_error:
-                    print(f"❌ [ERROR] MCP call failed: {str(mcp_error)}")
-                    ai_response = f"申し訳ありません。在庫管理システムでエラーが発生しました: {str(mcp_error)}"
-            else:
-                print(f"🔍 [DEBUG] No specific inventory pattern matched, using LLM")
-                ai_response = await get_llm_response(request.message, current_user)
+                        try:
+                            format_response = client.chat.completions.create(
+                                model="gpt-4o-mini",
+                                messages=[{"role": "user", "content": formatting_prompt}],
+                                max_tokens=500,
+                                temperature=0.3
+                            )
+                            ai_response = format_response.choices[0].message.content
+                        except Exception as e:
+                            print(f"⚠️ [警告] 結果整形失敗: {str(e)}")
+                            ai_response = mcp_result.get("message", f"{selected_tool}が正常に実行されました。")
+                    else:
+                        # データがない場合はメッセージをそのまま表示
+                        ai_response = mcp_result.get("message", f"{selected_tool}が正常に実行されました。")
+                else:
+                    print(f"❌ [エラー] MCP失敗: {mcp_result.get('error')}")
+                    ai_response = f"申し訳ありません。{selected_tool}の実行でエラーが発生しました: {mcp_result.get('error')}"
+                    
+            except Exception as e:
+                print(f"❌ [エラー] MCP実行エラー: {str(e)}")
+                ai_response = f"申し訳ありません。{selected_tool}の実行でエラーが発生しました: {str(e)}"
+        
         else:
-            print(f"🔍 [DEBUG] No inventory keywords, using LLM directly")
+            print(f"🔍 [行動] LLMチャットを実行")
             ai_response = await get_llm_response(request.message, current_user)
         
-        print(f"🔍 [DEBUG] Final response: {ai_response}")
+        print(f"✅ [完了] 最終応答: {ai_response}")
+        print(f"=== Morizo AI ReAct Agent 終了 ===\n")
         
         return ChatResponse(
             response=ai_response,
@@ -254,130 +346,9 @@ async def get_llm_response(message: str, current_user) -> str:
         print(f"❌ [ERROR] LLM response error: {str(e)}")
         return f"申し訳ありません。AI応答でエラーが発生しました: {str(e)}"
 
-# MCP統合エンドポイント
-@app.post("/inventory/add")
-async def add_inventory_item(request: InventoryRequest, auth_data = Depends(verify_token)):
-    """在庫アイテムを追加"""
-    try:
-        current_user = auth_data["user"]
-        raw_token = auth_data["raw_token"]
-        
-        result = await mcp_client.call_tool(
-            "inventory_add",
-            arguments={
-                "token": raw_token,  # 生のJWTトークンを使用
-                "item_name": request.item_name,
-                "quantity": request.quantity,
-                "unit": request.unit,
-                "storage_location": request.storage_location,
-                "expiry_date": request.expiry_date
-            }
-        )
-        
-        if result.get("success"):
-            return {"success": True, "data": result["data"]}
-        else:
-            raise HTTPException(status_code=400, detail=result.get("error", "Unknown error"))
-            
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Inventory add error: {str(e)}")
-
-@app.get("/inventory/list")
-async def list_inventory_items(auth_data = Depends(verify_token)):
-    """在庫一覧を取得"""
-    try:
-        current_user = auth_data["user"]
-        raw_token = auth_data["raw_token"]
-        
-        result = await mcp_client.call_tool(
-            "inventory_list",
-            arguments={"token": raw_token}
-        )
-        
-        if result.get("success"):
-            return {"success": True, "data": result["data"]}
-        else:
-            raise HTTPException(status_code=400, detail=result.get("error", "Unknown error"))
-            
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Inventory list error: {str(e)}")
-
-@app.get("/inventory/{item_id}")
-async def get_inventory_item(item_id: str, auth_data = Depends(verify_token)):
-    """特定の在庫アイテムを取得"""
-    try:
-        current_user = auth_data["user"]
-        raw_token = auth_data["raw_token"]
-        
-        result = await mcp_client.call_tool(
-            "inventory_get",
-            arguments={
-                "token": raw_token,
-                "item_id": item_id
-            }
-        )
-        
-        if result.get("success"):
-            return {"success": True, "data": result["data"]}
-        else:
-            raise HTTPException(status_code=400, detail=result.get("error", "Unknown error"))
-            
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Inventory get error: {str(e)}")
-
-@app.put("/inventory/update")
-async def update_inventory_item(request: InventoryUpdateRequest, auth_data = Depends(verify_token)):
-    """在庫アイテムを更新"""
-    try:
-        current_user = auth_data["user"]
-        raw_token = auth_data["raw_token"]
-        
-        arguments = {
-            "token": raw_token,
-            "item_id": request.item_id
-        }
-        
-        if request.item_name: arguments["item_name"] = request.item_name
-        if request.quantity is not None: arguments["quantity"] = request.quantity
-        if request.unit: arguments["unit"] = request.unit
-        if request.storage_location: arguments["storage_location"] = request.storage_location
-        if request.expiry_date: arguments["expiry_date"] = request.expiry_date
-        
-        result = await mcp_client.call_tool(
-            "inventory_update",
-            arguments=arguments
-        )
-        
-        if result.get("success"):
-            return {"success": True, "data": result["data"]}
-        else:
-            raise HTTPException(status_code=400, detail=result.get("error", "Unknown error"))
-            
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Inventory update error: {str(e)}")
-
-@app.delete("/inventory/{item_id}")
-async def delete_inventory_item(item_id: str, auth_data = Depends(verify_token)):
-    """在庫アイテムを削除"""
-    try:
-        current_user = auth_data["user"]
-        raw_token = auth_data["raw_token"]
-        
-        result = await mcp_client.call_tool(
-            "inventory_delete",
-            arguments={
-                "token": raw_token,
-                "item_id": item_id
-            }
-        )
-        
-        if result.get("success"):
-            return {"success": True, "message": result["message"]}
-        else:
-            raise HTTPException(status_code=400, detail=result.get("error", "Unknown error"))
-            
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Inventory delete error: {str(e)}")
+# 動的MCPエージェントがすべての在庫操作を処理するため、
+# 個別のエンドポイントは不要になりました。
+# すべての操作は /chat エンドポイント経由で実行されます。
 
 if __name__ == "__main__":
     import uvicorn
