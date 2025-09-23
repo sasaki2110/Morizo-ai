@@ -8,6 +8,44 @@ Smart Pantry MVPのAIエージェント（LLM処理 + 音声認識）
 - **Morizo-web** - Next.js Webアプリ（別リポジトリ）
 - **Morizo-mobile** - Expo モバイルアプリ（別リポジトリ）
 
+## 📁 フォルダ構成（リファクタリング後）
+
+```
+Morizo AI/
+├── main.py                           # メインアプリケーション（145行）
+├── session_manager.py                 # セッション管理
+├── true_react_agent.py               # 真のReActエージェント
+├── action_planner.py                  # 行動計画立案
+├── task_manager.py                    # タスク管理
+├── db_mcp_server_stdio.py            # MCPサーバー
+├── config/                           # 設定管理
+│   ├── __init__.py
+│   ├── logging_config.py             # ログ設定・ローテーション
+│   └── cors_config.py                 # CORS設定
+├── auth/                             # 認証・セキュリティ
+│   ├── __init__.py
+│   └── authentication.py             # Supabase認証
+├── agents/                           # エージェント・MCP
+│   ├── __init__.py
+│   └── mcp_client.py                  # MCPクライアント
+├── models/                           # データモデル
+│   ├── __init__.py
+│   └── requests.py                    # Pydanticモデル
+├── utils/                            # ユーティリティ
+│   ├── __init__.py
+│   ├── session_utils.py               # セッション管理
+│   └── llm_utils.py                   # LLM処理
+├── handlers/                         # ハンドラー
+│   ├── __init__.py
+│   ├── chat_handler.py                # チャット処理
+│   └── session_handler.py             # セッション管理
+├── tests/                            # テスト
+│   └── test_true_react_agent_short.py # 真のReActエージェントテスト
+├── docs/                             # ドキュメント
+├── backups/                          # バックアップファイル
+└── requirements.txt                  # 依存関係
+```
+
 ## 機能
 
 ### AIエージェント
@@ -60,6 +98,8 @@ cp .env.example .env
 
 ### 3. サーバー起動
 ```bash
+python main.py
+# または
 uvicorn main:app --reload --port 8000
 ```
 
@@ -90,7 +130,14 @@ curl http://localhost:8000/health
 
 ## 🎉 最新の成果
 
-**2025年9月22日** - 完全動的MCPエージェントが完成！
+**2025年9月23日** - リファクタリング完了！統一されたReActエージェントが完成！
+
+### ✅ リファクタリング成果
+- **71%のコード削減**: main.py 504行 → 145行
+- **完全な責任分離**: 15のモジュールに分割
+- **統一されたReActエージェント**: 単純・複雑問わず同じフロー
+- **真のAIエージェント化**: ActionPlanner + TaskManager + TrueReactAgent
+- **保守性の大幅向上**: 各モジュールが独立して動作
 
 ### ✅ 実装完了
 - **FastMCP 2.12.3**でMCPサーバー構築
@@ -102,9 +149,9 @@ curl http://localhost:8000/health
 - **ハードコーディングの完全排除**
 
 ### 🚀 次のステップ
-- **高度なAIエージェント化**の設計
+- **Phase 4.4**: 確認プロセス（操作前検証、確認ダイアログ）
+- **Phase 4.5**: ロールバック機能（操作履歴、Undo/Redo機能）
 - **レシピ提案機能**の追加
-- **文脈理解**の強化
 
 ## 関連リポジトリ
 
@@ -116,7 +163,12 @@ curl http://localhost:8000/health
 - ✅ **Phase 1**: 基本機能（完了）
 - ✅ **Phase 2**: MCP化（完了）
 - ✅ **Phase 3**: 動的AIエージェント化（完了）
-- 🚀 **Phase 4**: 高度なAIエージェント化（計画中）
+- ✅ **Phase 4.1**: 基本コンテキスト管理（完了）
+- ✅ **Phase 4.2**: インテリジェント判断（完了）
+- ✅ **Phase 4.3**: 真のAIエージェント化（完了）
+- ✅ **リファクタリング**: 統一されたReActエージェント（完了）
+- 🚀 **Phase 4.4**: 確認プロセス（計画中）
+- 🚀 **Phase 4.5**: ロールバック機能（計画中）
 
 詳細は[開発ロードマップ](docs/ROADMAP.md)と[自前ReActループ実装フロー](docs/MAKINGREACT.md)をご確認ください。
 

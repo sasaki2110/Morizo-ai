@@ -208,7 +208,8 @@ class TrueReactAgent:
         """
         try:
             # MCPツールを実行（main.pyのMCPClientを使用）
-            from main import mcp_client
+            from agents.mcp_client import MCPClient
+            mcp_client = MCPClient()
             
             # トークンを追加
             params = decision["parameters"].copy()
