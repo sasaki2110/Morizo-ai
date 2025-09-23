@@ -86,7 +86,10 @@ async def inventory_add(
     storage_location: str = "冷蔵庫",
     expiry_date: Optional[str] = None
 ) -> Dict[str, Any]:
-    """在庫にアイテムを追加
+    """在庫にアイテムを1件追加
+    
+    個別在庫法に従い、1つのアイテムを1件として登録します。
+    複数のアイテムを追加する場合は、このツールを複数回呼び出してください。
     
     Args:
         token: 認証トークン
@@ -126,6 +129,9 @@ async def inventory_add(
 async def inventory_list(token: str) -> Dict[str, Any]:
     """在庫一覧を取得
     
+    ユーザーの全在庫アイテムを取得します。
+    個別在庫法に従い、各アイテムが個別に表示されます。
+    
     Args:
         token: 認証トークン
     
@@ -146,7 +152,9 @@ async def inventory_list(token: str) -> Dict[str, Any]:
 
 @mcp.tool()
 async def inventory_get(token: str, item_id: str) -> Dict[str, Any]:
-    """特定の在庫アイテムを取得
+    """特定の在庫アイテムを1件取得
+    
+    個別在庫法に従い、指定されたIDのアイテムを1件取得します。
     
     Args:
         token: 認証トークン
@@ -177,7 +185,10 @@ async def inventory_update(
     expiry_date: Optional[str] = None,
     item_id: Optional[str] = None
 ) -> Dict[str, Any]:
-    """在庫アイテムを更新
+    """在庫アイテムを1件更新
+    
+    個別在庫法に従い、1つのアイテムを1件として更新します。
+    複数のアイテムを更新する場合は、このツールを複数回呼び出してください。
     
     Args:
         token: 認証トークン
@@ -224,7 +235,10 @@ async def inventory_update(
 
 @mcp.tool()
 async def inventory_delete(token: str, item_id: str) -> Dict[str, Any]:
-    """在庫アイテムを削除
+    """在庫アイテムを1件削除
+    
+    個別在庫法に従い、1つのアイテムを1件として削除します。
+    複数のアイテムを削除する場合は、このツールを複数回呼び出してください。
     
     Args:
         token: 認証トークン

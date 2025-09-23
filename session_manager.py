@@ -17,8 +17,9 @@ logger = logging.getLogger('morizo_ai.session')
 class SessionContext:
     """ユーザーセッションのコンテキスト管理"""
     
-    def __init__(self, user_id: str):
+    def __init__(self, user_id: str, token: str = None):
         self.user_id = user_id
+        self.token = token  # 認証トークンを追加
         self.session_id = str(uuid.uuid4())
         self.created_at = datetime.now()
         self.last_activity = datetime.now()
@@ -147,13 +148,16 @@ class SessionManager:
         self.active_sessions: Dict[str, SessionContext] = {}
         self.session_timeout = session_timeout_minutes
         
-    def get_or_create_session(self, user_id: str) -> SessionContext:
+    def get_or_create_session(self, user_id: str, token: str = None) -> SessionContext:
         """セッションを取得または作成"""
         # 既存セッションをチェック
         if user_id in self.active_sessions:
             session = self.active_sessions[user_id]
             if self._is_session_valid(session):
                 print(f"✅ 既存セッションを取得: {user_id}")
+                # トークンを更新
+                if token:
+                    session.token = token
                 return session
             else:
                 # タイムアウトしたセッションをクリア
@@ -161,7 +165,7 @@ class SessionManager:
                 self.clear_session(user_id)
         
         # 新規セッション作成
-        session = SessionContext(user_id)
+        session = SessionContext(user_id, token)
         self.active_sessions[user_id] = session
         print(f"🆕 新規セッション作成: {user_id}")
         return session

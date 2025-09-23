@@ -20,7 +20,7 @@ import asyncio
 import logging
 import shutil
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from dotenv import load_dotenv
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -78,6 +78,114 @@ logger = logging.getLogger('morizo_ai')
 
 # ログテスト
 logger.info("🚀 Morizo AI アプリケーション起動 - ログテスト")
+
+def _is_complex_request(message: str) -> bool:
+    """
+    複雑な要求かどうかを判定する
+    
+    Args:
+        message: ユーザーのメッセージ
+        
+    Returns:
+        複雑な要求かどうか
+    """
+    # 複数アイテムのキーワード
+    multi_item_keywords = [
+        "と", "も", "および", "それから", "さらに", "また", "加えて",
+        "1パックと", "2本と", "3個と", "1袋と"
+    ]
+    
+    # 複数操作のキーワード
+    multi_operation_keywords = [
+        "その後", "それから", "次に", "さらに", "また", "加えて",
+        "変更して", "削除して", "更新して"
+    ]
+    
+    # 複数アイテムの判定
+    for keyword in multi_item_keywords:
+        if keyword in message:
+            return True
+    
+    # 複数操作の判定
+    for keyword in multi_operation_keywords:
+        if keyword in message:
+            return True
+    
+    return False
+
+async def _process_with_true_react(request, user_session, raw_token):
+    """
+    真のReActエージェントで処理する
+    
+    Args:
+        request: リクエスト
+        user_session: ユーザーセッション
+        raw_token: 認証トークン
+        
+    Returns:
+        処理結果
+    """
+    try:
+        # 真のReActエージェントのインポート
+        from true_react_agent import TrueReactAgent
+        from action_planner import ActionPlanner
+        from task_manager import TaskManager
+        
+        logger.info("🤖 [真のAIエージェント] 行動計画立案を開始")
+        
+        # OpenAIクライアントの初期化
+        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        
+        # 真のReActエージェントの初期化
+        true_react_agent = TrueReactAgent(client)
+        
+        # MCPから動的にツール一覧を取得
+        available_tools = await _get_available_tools_from_mcp()
+        
+        # 真のReActエージェントで処理
+        result = await true_react_agent.process_request(
+            request.message,
+            user_session,
+            available_tools
+        )
+        
+        logger.info("🤖 [真のAIエージェント] 処理完了")
+        return {"response": result}
+        
+    except Exception as e:
+        logger.error(f"❌ [真のAIエージェント] エラー: {str(e)}")
+        return {"response": f"申し訳ありません。処理中にエラーが発生しました: {str(e)}"}
+
+async def _get_available_tools_from_mcp() -> List[str]:
+    """
+    MCPから利用可能なツール一覧を取得する
+    
+    Returns:
+        利用可能なツール一覧
+    """
+    try:
+        available_tools = []
+        async with stdio_client(mcp_client.server_params) as (read, write):
+            async with ClientSession(read, write) as mcp_session:
+                await mcp_session.initialize()
+                
+                # ツールリストを取得
+                tools_response = await mcp_session.list_tools()
+                
+                if tools_response and hasattr(tools_response, 'tools'):
+                    for tool in tools_response.tools:
+                        available_tools.append(tool.name)
+                    logger.info(f"🔧 [MCP] 利用可能なツール: {available_tools}")
+                else:
+                    logger.warning("⚠️ [MCP] ツールリストの取得に失敗、フォールバックを使用")
+                    available_tools = ["inventory_add", "inventory_list", "inventory_get", "inventory_update", "inventory_delete", "llm_chat"]
+        
+        return available_tools
+        
+    except Exception as e:
+        logger.error(f"❌ [MCP] ツール一覧取得エラー: {str(e)}")
+        # フォールバック
+        return ["inventory_add", "inventory_list", "inventory_get", "inventory_update", "inventory_delete", "llm_chat"]
 
 def mask_email(email: str) -> str:
     """メールアドレスをマスク"""
@@ -252,7 +360,8 @@ async def get_session_status(auth_data = Depends(verify_token)):
     """セッション状態を取得"""
     try:
         current_user = auth_data["user"]
-        user_session = session_manager.get_or_create_session(current_user.id)
+        token = auth_data["raw_token"]
+        user_session = session_manager.get_or_create_session(current_user.id, token)
         
         return {
             "success": True,
@@ -281,7 +390,8 @@ async def clear_session_history(auth_data = Depends(verify_token)):
     """操作履歴のみをクリア（方法C: 操作履歴の制限）"""
     try:
         current_user = auth_data["user"]
-        user_session = session_manager.get_or_create_session(current_user.id)
+        token = auth_data["raw_token"]
+        user_session = session_manager.get_or_create_session(current_user.id, token)
         user_session.clear_history()
         
         return {
@@ -349,7 +459,7 @@ async def chat(request: ChatRequest, auth_data = Depends(verify_token)):
         raw_token = auth_data["raw_token"]
         
         # === セッション管理 ===
-        user_session = session_manager.get_or_create_session(current_user.id)
+        user_session = session_manager.get_or_create_session(current_user.id, raw_token)
         logger.info(f"📱 [セッション] セッションID: {user_session.session_id}")
         logger.info(f"📱 [セッション] 継続時間: {user_session.get_session_duration().total_seconds()/60:.1f}分")
         logger.info(f"📱 [セッション] 操作履歴: {len(user_session.operation_history)}件")
@@ -359,10 +469,11 @@ async def chat(request: ChatRequest, auth_data = Depends(verify_token)):
         logger.info(f"   User: {mask_email(current_user.email)}")
         logger.info(f"   User ID: {current_user.id}")
         
-        if not os.getenv("OPENAI_API_KEY"):
-            raise HTTPException(status_code=500, detail="OpenAI API key not configured")
+        # 真のAIエージェント化の判定
+        if _is_complex_request(request.message):
+            logger.info("🤖 [真のAIエージェント] 複雑な要求を検出、行動計画立案を開始")
+            return await _process_with_true_react(request, user_session, raw_token)
         
-        # === 思考フェーズ ===
         logger.info(f"🧠 [思考] MCPサーバーから動的にツールリストを取得中...")
         
         # MCPサーバーから動的にツールリストを取得
