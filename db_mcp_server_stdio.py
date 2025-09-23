@@ -23,6 +23,9 @@ from dotenv import load_dotenv
 # 環境変数の読み込み
 load_dotenv()
 
+# FastMCPロゴを非表示にする（環境変数で制御）
+os.environ["FASTMCP_DISABLE_BANNER"] = "1"
+
 # MCPサーバーの初期化
 mcp = FastMCP("Database CRUD Server")
 
@@ -167,23 +170,23 @@ async def inventory_get(token: str, item_id: str) -> Dict[str, Any]:
 @mcp.tool()
 async def inventory_update(
     token: str,
-    item_id: str,
-    item_name: Optional[str] = None,
+    item_name: str,
     quantity: Optional[float] = None,
     unit: Optional[str] = None,
     storage_location: Optional[str] = None,
-    expiry_date: Optional[str] = None
+    expiry_date: Optional[str] = None,
+    item_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """在庫アイテムを更新
     
     Args:
         token: 認証トークン
-        item_id: アイテムID
-        item_name: アイテム名（オプション）
+        item_name: アイテム名（必須）
         quantity: 数量（オプション）
         unit: 単位（オプション）
         storage_location: 保管場所（オプション）
         expiry_date: 消費期限（オプション）
+        item_id: アイテムID（オプション、指定しない場合は最新のアイテムを更新）
     
     Returns:
         更新されたアイテムの情報
@@ -200,6 +203,14 @@ async def inventory_update(
 
         if not update_data:
             return {"success": False, "error": "更新するデータがありません"}
+
+        # item_idが指定されていない場合は、item_nameで最新のアイテムを取得
+        if not item_id:
+            # 同じitem_nameの最新のアイテムを取得
+            existing_items = db_client.get_client().table("inventory").select("id").eq("item_name", item_name).eq("user_id", user_id).order("created_at", desc=True).limit(1).execute()
+            if not existing_items.data:
+                return {"success": False, "error": f"'{item_name}'が見つかりません"}
+            item_id = existing_items.data[0]["id"]
 
         result = db_client.get_client().table("inventory").update(update_data).eq("id", item_id).eq("user_id", user_id).execute()
         if result.data:

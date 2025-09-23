@@ -2,10 +2,19 @@
 
 ## 全体アーキテクチャ
 
-### **現在のアーキテクチャ（MCP統合完了）**
+### **現在のアーキテクチャ（セッション管理・FIFO原則実装完了）**
 ```
 Morizo AI Agent (main.py)
 ├── FastAPI Server
+├── セッション管理システム
+│   ├── SessionContext (メモリ内)
+│   ├── 操作履歴管理 (最大10件)
+│   ├── 在庫状態管理 (ID情報含む)
+│   └── 自動タイムアウト
+├── FIFO原則による在庫管理
+│   ├── 個別在庫法
+│   ├── 最古→最新の操作順序
+│   └── ユーザー指定対応
 ├── MCP Client (stdio接続)
 ├── Supabase CRUD MCP Server
 │   ├── inventory_add

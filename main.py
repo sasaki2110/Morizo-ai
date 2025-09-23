@@ -17,15 +17,103 @@ from supabase import create_client, Client
 import os
 import json
 import asyncio
+import logging
+import shutil
+from datetime import datetime
 from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from session_manager import session_manager, SessionContext
+
+def setup_log_rotation():
+    """ログローテーション設定"""
+    log_file = 'morizo_ai.log'
+    backup_file = 'morizo_ai.log.1'
+    
+    # 既存のログファイルがある場合、バックアップを作成
+    if os.path.exists(log_file):
+        try:
+            # 既存のバックアップファイルがある場合は削除
+            if os.path.exists(backup_file):
+                os.remove(backup_file)
+                print(f"🗑️ 古いバックアップログを削除: {backup_file}")
+            
+            # 現在のログファイルをバックアップに移動
+            shutil.move(log_file, backup_file)
+            print(f"📦 ログファイルをバックアップ: {log_file} → {backup_file}")
+            
+        except Exception as e:
+            print(f"⚠️ ログローテーション失敗: {str(e)}")
+    else:
+        print(f"📝 新しいログファイルを作成: {log_file}")
+    
+    return log_file
+
+# ログローテーション実行
+log_file = setup_log_rotation()
+
+# ログ設定
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(log_file, encoding='utf-8', mode='a'),
+        logging.StreamHandler()  # コンソール出力も残す
+    ],
+    force=True  # 既存の設定を上書き
+)
+
+# FastMCPのログを抑制
+logging.getLogger('mcp').setLevel(logging.WARNING)
+logging.getLogger('mcp.client').setLevel(logging.WARNING)
+logging.getLogger('mcp.server').setLevel(logging.WARNING)
+
+# HTTP関連のログを抑制
+logging.getLogger('httpx').setLevel(logging.WARNING)
+logging.getLogger('httpcore').setLevel(logging.WARNING)
+logging.getLogger('hpack').setLevel(logging.WARNING)
+
+logger = logging.getLogger('morizo_ai')
+
+# ログテスト
+logger.info("🚀 Morizo AI アプリケーション起動 - ログテスト")
+
+def mask_email(email: str) -> str:
+    """メールアドレスをマスク"""
+    if "@" not in email:
+        return email
+    
+    local, domain = email.split("@", 1)
+    if len(local) <= 2:
+        masked_local = local[0] + "*" * (len(local) - 1)
+    else:
+        masked_local = local[0] + "*" * (len(local) - 2) + local[-1]
+    
+    return f"{masked_local}@{domain}"
 
 # 環境変数の読み込み
 load_dotenv()
 
 app = FastAPI(title="Morizo AI", description="Smart Pantry AI Agent with MCP Integration")
+
+# バックグラウンドタスク: 期限切れセッションの自動クリア
+async def cleanup_expired_sessions():
+    """期限切れセッションを定期的にクリア"""
+    while True:
+        try:
+            session_manager.clear_expired_sessions()
+            await asyncio.sleep(300)  # 5分ごとにチェック
+        except Exception as e:
+            print(f"❌ [エラー] セッションクリーンアップエラー: {str(e)}")
+            await asyncio.sleep(60)  # エラー時は1分後に再試行
+
+@app.on_event("startup")
+async def startup_event():
+    """アプリケーション起動時の処理"""
+    logger.info("🚀 Morizo AI セッション管理システム起動")
+    # バックグラウンドタスクを開始
+    asyncio.create_task(cleanup_expired_sessions())
 
 # CORS設定
 app.add_middleware(
@@ -59,9 +147,9 @@ class MCPClient:
         """MCPツールを呼び出し"""
         try:
             async with stdio_client(self.server_params) as (read, write):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-                    result = await session.call_tool(tool_name, arguments=arguments)
+                async with ClientSession(read, write) as mcp_session:
+                    await mcp_session.initialize()
+                    result = await mcp_session.call_tool(tool_name, arguments=arguments)
                     
                     if result and hasattr(result, 'content') and result.content:
                         return json.loads(result.content[0].text)
@@ -74,11 +162,11 @@ class MCPClient:
 mcp_client = MCPClient()
 
 # サーバー起動時にモデル情報を表示
-print(f"🚀 Morizo AI Server starting...")
-print(f"📋 Using OpenAI Model: {model_name}")
-print(f"🔑 OpenAI API Key configured: {'Yes' if os.getenv('OPENAI_API_KEY') else 'No'}")
-print(f"🔐 Supabase configured: {'Yes' if supabase else 'No'}")
-print(f"🔗 MCP Integration: Enabled")
+logger.info(f"🚀 Morizo AI Server starting...")
+logger.info(f"📋 Using OpenAI Model: {model_name}")
+logger.info(f"🔑 OpenAI API Key configured: {'Yes' if os.getenv('OPENAI_API_KEY') else 'No'}")
+logger.info(f"🔐 Supabase configured: {'Yes' if supabase else 'No'}")
+logger.info(f"🔗 MCP Integration: Enabled")
 
 # 認証設定
 security = HTTPBearer()
@@ -99,8 +187,10 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(secur
         if raw_token.startswith('[') and raw_token.endswith(']'):
             raw_token = raw_token[1:-1]
         
-        print(f"🔍 [DEBUG] Raw token received: {raw_token[:50]}...")
-        print(f"🔍 [DEBUG] Token length: {len(raw_token)}")
+        # トークンを省略表示
+        token_preview = f"{raw_token[:20]}...{raw_token[-20:]}" if len(raw_token) > 40 else raw_token
+        logger.info(f"🔍 [AUTH] Token received: {token_preview}")
+        logger.info(f"🔍 [AUTH] Token length: {len(raw_token)}")
         
         # トークンからユーザー情報を取得
         response = supabase.auth.get_user(raw_token)
@@ -112,7 +202,14 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(secur
                 detail="Invalid authentication token"
             )
         
-        print(f"✅ [SUCCESS] User authenticated: {response.user.email}")
+        # メールアドレスをマスク
+        email = response.user.email
+        if '@' in email:
+            local, domain = email.split('@', 1)
+            masked_email = f"{local[:3]}*****@{domain}"
+        else:
+            masked_email = email
+        logger.info(f"✅ [SUCCESS] User authenticated: {masked_email}")
         
         # ユーザー情報とトークンを辞書で返す
         return {
@@ -120,7 +217,7 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(secur
             "raw_token": raw_token
         }
     except Exception as e:
-        print(f"❌ [ERROR] Authentication failed: {str(e)}")
+        logger.error(f"❌ [ERROR] Authentication failed: {str(e)}")
         raise HTTPException(
             status_code=401,
             detail=f"Authentication failed: {str(e)}"
@@ -150,6 +247,98 @@ async def root():
 async def health_check():
     return {"status": "healthy", "service": "Morizo AI", "mcp_integration": "enabled"}
 
+@app.get("/session/status")
+async def get_session_status(auth_data = Depends(verify_token)):
+    """セッション状態を取得"""
+    try:
+        current_user = auth_data["user"]
+        user_session = session_manager.get_or_create_session(current_user.id)
+        
+        return {
+            "success": True,
+            "session_info": user_session.to_dict(),
+            "recent_operations": user_session.get_recent_operations(5)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Session status error: {str(e)}")
+
+@app.post("/session/clear")
+async def clear_session(auth_data = Depends(verify_token)):
+    """セッションをクリア（方法A: 明示的なクリア）"""
+    try:
+        current_user = auth_data["user"]
+        session_manager.clear_session(current_user.id, reason="user_request")
+        
+        return {
+            "success": True,
+            "message": "セッションをクリアしました。新しい会話を始めましょう！"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Session clear error: {str(e)}")
+
+@app.post("/session/clear-history")
+async def clear_session_history(auth_data = Depends(verify_token)):
+    """操作履歴のみをクリア（方法C: 操作履歴の制限）"""
+    try:
+        current_user = auth_data["user"]
+        user_session = session_manager.get_or_create_session(current_user.id)
+        user_session.clear_history()
+        
+        return {
+            "success": True,
+            "message": "操作履歴をクリアしました。"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Session history clear error: {str(e)}")
+
+@app.get("/session/all")
+async def get_all_sessions_info(auth_data = Depends(verify_token)):
+    """全セッション情報を取得（開発・テスト用）"""
+    try:
+        all_info = session_manager.get_all_sessions_info()
+        return {
+            "success": True,
+            "sessions_info": all_info
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"All sessions info error: {str(e)}")
+
+@app.post("/session/clear-all")
+async def clear_all_sessions(auth_data = Depends(verify_token)):
+    """全セッションをクリア（開発・テスト用）"""
+    try:
+        session_manager.clear_all_sessions()
+        return {
+            "success": True,
+            "message": "全セッションをクリアしました。"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Clear all sessions error: {str(e)}")
+
+@app.post("/test/clear-inventory")
+async def clear_test_inventory(auth_data = Depends(verify_token)):
+    """テスト用: 在庫をクリア（開発・テスト用）"""
+    try:
+        current_user = auth_data["user"]
+        raw_token = auth_data["raw_token"]
+        
+        # テスト用の在庫クリア（牛乳を削除）
+        mcp_result = await mcp_client.call_tool(
+            "inventory_delete",
+            arguments={
+                "token": raw_token,
+                "item_name": "牛乳"
+            }
+        )
+        
+        return {
+            "success": True,
+            "message": "テスト用在庫をクリアしました。",
+            "mcp_result": mcp_result
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Clear test inventory error: {str(e)}")
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest, auth_data = Depends(verify_token)):
     """
@@ -159,35 +348,41 @@ async def chat(request: ChatRequest, auth_data = Depends(verify_token)):
         current_user = auth_data["user"]
         raw_token = auth_data["raw_token"]
         
-        print(f"\n=== Morizo AI ReAct Agent 開始 ===")
-        print(f"🔍 [観察] ユーザー入力: {request.message}")
-        print(f"   User: {current_user.email}")
-        print(f"   User ID: {current_user.id}")
+        # === セッション管理 ===
+        user_session = session_manager.get_or_create_session(current_user.id)
+        logger.info(f"📱 [セッション] セッションID: {user_session.session_id}")
+        logger.info(f"📱 [セッション] 継続時間: {user_session.get_session_duration().total_seconds()/60:.1f}分")
+        logger.info(f"📱 [セッション] 操作履歴: {len(user_session.operation_history)}件")
+        
+        logger.info(f"\n=== Morizo AI ReAct Agent 開始 ===")
+        logger.info(f"🔍 [観察] ユーザー入力: {request.message}")
+        logger.info(f"   User: {mask_email(current_user.email)}")
+        logger.info(f"   User ID: {current_user.id}")
         
         if not os.getenv("OPENAI_API_KEY"):
             raise HTTPException(status_code=500, detail="OpenAI API key not configured")
         
         # === 思考フェーズ ===
-        print(f"🧠 [思考] MCPサーバーから動的にツールリストを取得中...")
+        logger.info(f"🧠 [思考] MCPサーバーから動的にツールリストを取得中...")
         
         # MCPサーバーから動的にツールリストを取得
         available_tools = []
         try:
             async with stdio_client(mcp_client.server_params) as (read, write):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
+                async with ClientSession(read, write) as mcp_session:
+                    await mcp_session.initialize()
                     
                     # ツールリストを取得
-                    tools_response = await session.list_tools()
+                    tools_response = await mcp_session.list_tools()
                     
                     if tools_response and hasattr(tools_response, 'tools'):
                         for tool in tools_response.tools:
                             available_tools.append(f"- {tool.name}: {tool.description}")
                     
-                    print(f"🧠 [思考] 利用可能なツール: {len(available_tools)}個")
+                    logger.info(f"🧠 [思考] 利用可能なツール: {len(available_tools)}個")
                     
         except Exception as e:
-            print(f"❌ [エラー] ツールリスト取得失敗: {str(e)}")
+            logger.error(f"❌ [エラー] ツールリスト取得失敗: {str(e)}")
             # フォールバック: 基本的なツールリスト
             available_tools = [
                 "- inventory_list: 在庫一覧を取得",
@@ -197,11 +392,48 @@ async def chat(request: ChatRequest, auth_data = Depends(verify_token)):
                 "- inventory_delete: 在庫アイテムを削除"
             ]
         
-        # LLMにツール選択を依頼
+        # LLMにツール選択を依頼（セッションコンテキストを含む）
         tools_list = "\n".join(available_tools)
+        
+        # セッションの在庫一覧をコンテキストに追加
+        inventory_context = ""
+        if user_session.current_inventory:
+            try:
+                inventory_context = f"""
+現在の在庫状況:
+{json.dumps(user_session.current_inventory, ensure_ascii=False, indent=2)}
+"""
+            except TypeError as e:
+                logger.warning(f"⚠️ 在庫一覧のJSONシリアライズ失敗: {str(e)}")
+                # シンプルな文字列表現にフォールバック
+                inventory_context = f"""
+現在の在庫状況:
+{user_session.current_inventory}
+"""
+        
+        # 最近の操作履歴をコンテキストに追加
+        recent_operations = user_session.get_recent_operations(3)
+        operation_context = ""
+        if recent_operations:
+            try:
+                operation_context = f"""
+最近の操作履歴:
+{json.dumps(recent_operations, ensure_ascii=False, indent=2)}
+"""
+            except TypeError as e:
+                logger.warning(f"⚠️ 操作履歴のJSONシリアライズ失敗: {str(e)}")
+                # シンプルな文字列表現にフォールバック
+                operation_context = f"""
+最近の操作履歴:
+{recent_operations}
+"""
+        
         tool_selection_prompt = f"""
 あなたはMorizoというスマートパントリーアシスタントです。
 ユーザーの要求を分析し、適切なツールを選択してください。
+
+{inventory_context}
+{operation_context}
 
 利用可能なツール:
 {tools_list}
@@ -217,8 +449,10 @@ async def chat(request: ChatRequest, auth_data = Depends(verify_token)):
         "item_name": "アイテム名（該当する場合）",
         "quantity": 数量（該当する場合）,
         "unit": "単位（該当する場合）",
-        "storage_location": "保管場所（該当する場合）"
-    }}
+        "storage_location": "保管場所（該当する場合）",
+        "item_id": "アイテムID（更新・削除の場合、セッションから取得）"
+    }},
+    "fifo_preference": "latest" or "oldest" or "auto"
 }}
 """
         
@@ -231,38 +465,54 @@ async def chat(request: ChatRequest, auth_data = Depends(verify_token)):
             )
             
             tool_decision = tool_response.choices[0].message.content
-            print(f"🧠 [思考] LLM判断: {tool_decision}")
+            logger.info(f"🧠 [思考] LLM判断: {tool_decision}")
             
             # JSON解析
-            import json
             try:
                 tool_data = json.loads(tool_decision)
                 selected_tool = tool_data.get("tool", "llm_chat")
                 reasoning = tool_data.get("reasoning", "")
                 parameters = tool_data.get("parameters", {})
+                fifo_preference = tool_data.get("fifo_preference", "auto")
                 
-                print(f"🎯 [決定] 選択されたツール: {selected_tool}")
-                print(f"🎯 [決定] 理由: {reasoning}")
+                logger.info(f"🎯 [決定] 選択されたツール: {selected_tool}")
+                logger.info(f"🎯 [決定] 理由: {reasoning}")
+                logger.info(f"🎯 [決定] FIFO設定: {fifo_preference}")
+                
+                # 更新・削除操作でitem_idが必要な場合、セッションから取得
+                if selected_tool in ["inventory_update", "inventory_delete"] and "item_name" in parameters:
+                    item_name = parameters["item_name"]
+                    
+                    # FIFO原則でIDを取得
+                    prefer_latest = fifo_preference == "latest"
+                    item_id = user_session.get_item_id_by_fifo(item_name, prefer_latest)
+                    
+                    if item_id:
+                        parameters["item_id"] = item_id
+                        logger.info(f"🔍 [FIFO] '{item_name}'のIDを取得: {item_id}")
+                    else:
+                        logger.warning(f"⚠️ [警告] '{item_name}'のIDが見つかりません")
+                        # IDが見つからない場合は、item_nameのみでMCPサーバーに任せる
                 
             except json.JSONDecodeError:
-                print(f"⚠️ [警告] JSON解析失敗、LLMチャットを使用")
+                logger.warning(f"⚠️ [警告] JSON解析失敗、LLMチャットを使用")
                 selected_tool = "llm_chat"
                 parameters = {}
                 
         except Exception as e:
-            print(f"❌ [エラー] LLM呼び出し失敗: {str(e)}")
+            logger.error(f"❌ [エラー] LLM呼び出し失敗: {str(e)}")
             selected_tool = "llm_chat"
             parameters = {}
         
         # === 行動フェーズ ===
-        print(f"🔍 [行動] {selected_tool}を実行中...")
+        logger.info(f"🔍 [行動] {selected_tool}を実行中...")
         
         if selected_tool == "llm_chat":
-            print(f"🔍 [行動] LLMチャットを実行")
+            logger.info(f"🔍 [行動] LLMチャットを実行")
             ai_response = await get_llm_response(request.message, current_user)
             
         elif selected_tool != "llm_chat":
-            print(f"🔍 [行動] MCPで{selected_tool}を実行")
+            logger.info(f"🔍 [行動] MCPで{selected_tool}を実行")
             try:
                 # 動的にMCPツールを呼び出し
                 mcp_arguments = {"token": raw_token}
@@ -271,7 +521,12 @@ async def chat(request: ChatRequest, auth_data = Depends(verify_token)):
                 if parameters:
                     mcp_arguments.update(parameters)
                 
-                print(f"🔍 [行動] 引数: {mcp_arguments}")
+                # 引数からトークンを省略表示
+                display_args = mcp_arguments.copy()
+                if 'token' in display_args:
+                    token = display_args['token']
+                    display_args['token'] = f"{token[:20]}...{token[-20:]}" if len(token) > 40 else token
+                logger.info(f"🔍 [行動] 引数: {display_args}")
                 
                 mcp_result = await mcp_client.call_tool(
                     selected_tool,
@@ -279,21 +534,44 @@ async def chat(request: ChatRequest, auth_data = Depends(verify_token)):
                 )
                 
                 if mcp_result.get("success"):
-                    print(f"✅ [成功] {selected_tool}実行完了")
+                    logger.info(f"✅ [成功] {selected_tool}実行完了")
+                    
+                    # セッションに操作履歴を記録
+                    user_session.add_operation(selected_tool, {
+                        "parameters": mcp_arguments,
+                        "result": mcp_result.get("data", {}),
+                        "user_request": request.message
+                    })
+                    
+                    # 在庫操作の場合は、セッションの在庫一覧を更新
+                    if selected_tool in ["inventory_add", "inventory_update", "inventory_delete"]:
+                        await update_session_inventory(user_session, raw_token)
                     
                     # 動的な結果処理
-                    if mcp_result.get("data"):
-                        # データがある場合は、LLMに結果を整形してもらう
-                        data_str = json.dumps(mcp_result["data"], ensure_ascii=False, indent=2)
+                    if mcp_result.get("data") or selected_tool in ["inventory_delete", "inventory_update"]:
+                        # データがある場合、または削除・更新操作の場合は、LLMに結果を整形してもらう
+                        data_str = ""
+                        if mcp_result.get("data"):
+                            data_str = json.dumps(mcp_result["data"], ensure_ascii=False, indent=2)
+                        
+                        # 削除・更新操作の場合は、セッション情報も含める
+                        session_context = ""
+                        if selected_tool in ["inventory_delete", "inventory_update"]:
+                            session_context = f"""
+現在の在庫状況:
+{json.dumps(user_session.current_inventory, ensure_ascii=False, indent=2)}
+"""
+                        
                         formatting_prompt = f"""
 以下の{selected_tool}の実行結果を、ユーザーにとって分かりやすい日本語で整形してください。
 
 実行結果:
-{data_str}
+{data_str if data_str else mcp_result.get("message", "操作が正常に完了しました")}
 
+{session_context}
 ユーザーの要求: "{request.message}"
 
-自然で親しみやすい日本語で回答してください。
+自然で親しみやすい日本語で回答してください。削除や更新の場合は、現在の在庫状況も含めて説明してください。
 """
                         
                         try:
@@ -305,25 +583,25 @@ async def chat(request: ChatRequest, auth_data = Depends(verify_token)):
                             )
                             ai_response = format_response.choices[0].message.content
                         except Exception as e:
-                            print(f"⚠️ [警告] 結果整形失敗: {str(e)}")
+                            logger.warning(f"⚠️ [警告] 結果整形失敗: {str(e)}")
                             ai_response = mcp_result.get("message", f"{selected_tool}が正常に実行されました。")
                     else:
                         # データがない場合はメッセージをそのまま表示
                         ai_response = mcp_result.get("message", f"{selected_tool}が正常に実行されました。")
                 else:
-                    print(f"❌ [エラー] MCP失敗: {mcp_result.get('error')}")
+                    logger.error(f"❌ [エラー] MCP失敗: {mcp_result.get('error')}")
                     ai_response = f"申し訳ありません。{selected_tool}の実行でエラーが発生しました: {mcp_result.get('error')}"
                     
             except Exception as e:
-                print(f"❌ [エラー] MCP実行エラー: {str(e)}")
+                logger.error(f"❌ [エラー] MCP実行エラー: {str(e)}")
                 ai_response = f"申し訳ありません。{selected_tool}の実行でエラーが発生しました: {str(e)}"
         
         else:
-            print(f"🔍 [行動] LLMチャットを実行")
+            logger.info(f"🔍 [行動] LLMチャットを実行")
             ai_response = await get_llm_response(request.message, current_user)
         
-        print(f"✅ [完了] 最終応答: {ai_response}")
-        print(f"=== Morizo AI ReAct Agent 終了 ===\n")
+        logger.info(f"✅ [完了] 最終応答: {ai_response}")
+        logger.info(f"=== Morizo AI ReAct Agent 終了 ===\n")
         
         return ChatResponse(
             response=ai_response,
@@ -333,8 +611,29 @@ async def chat(request: ChatRequest, auth_data = Depends(verify_token)):
         )
         
     except Exception as e:
-        print(f"❌ [ERROR] Chat processing error: {str(e)}")
+        logger.error(f"❌ [ERROR] Chat processing error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"AI processing error: {str(e)}")
+
+async def update_session_inventory(user_session: SessionContext, raw_token: str):
+    """セッションの在庫一覧を更新"""
+    try:
+        logger.info(f"📦 [セッション] 在庫一覧を更新中...")
+        
+        # MCPサーバーから在庫一覧を取得
+        mcp_result = await mcp_client.call_tool(
+            "inventory_list",
+            arguments={"token": raw_token}
+        )
+        
+        if mcp_result.get("success") and mcp_result.get("data"):
+            inventory_data = mcp_result["data"]
+            user_session.update_inventory_state(inventory_data)
+            logger.info(f"📦 [セッション] 在庫一覧更新完了: {len(inventory_data)}件")
+        else:
+            logger.warning(f"⚠️ [警告] 在庫一覧取得失敗: {mcp_result.get('error')}")
+            
+    except Exception as e:
+        logger.error(f"❌ [エラー] セッション在庫更新エラー: {str(e)}")
 
 async def get_llm_response(message: str, current_user) -> str:
     """LLMからレスポンスを取得"""
