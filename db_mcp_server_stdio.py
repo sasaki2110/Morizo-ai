@@ -266,9 +266,104 @@ async def inventory_delete(token: str, item_id: str) -> Dict[str, Any]:
     except Exception as e:
         return {"success": False, "error": f"データベース操作エラー: {str(e)}"}
 
+@mcp.tool()
+async def inventory_delete_by_name(token: str, item_name: str) -> Dict[str, Any]:
+    """名前指定での在庫アイテム一括削除
+    
+    指定された名前のアイテムを全て削除します。
+    例: "牛乳"を指定すると、牛乳の全アイテムが削除されます。
+    
+    Args:
+        token: 認証トークン
+        item_name: アイテム名（必須）
+    
+    Returns:
+        削除結果のメッセージと削除件数
+    """
+    try:
+        user_id = db_client.authenticate(token)
+        
+        # まず削除対象のアイテム数を確認
+        count_result = db_client.get_client().table("inventory").select("id", count="exact").eq("item_name", item_name).eq("user_id", user_id).execute()
+        if not count_result.data:
+            return {"success": False, "error": f"'{item_name}'が見つかりません"}
+        
+        # 削除実行
+        result = db_client.get_client().table("inventory").delete().eq("item_name", item_name).eq("user_id", user_id).execute()
+        
+        if result.data is not None:
+            deleted_count = len(result.data) if result.data else 0
+            return {"success": True, "message": f"'{item_name}'を{deleted_count}件削除しました"}
+        else:
+            return {"success": False, "error": result.error.message if result.error else "Unknown error"}
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+    except Exception as e:
+        return {"success": False, "error": f"データベース操作エラー: {str(e)}"}
+
+@mcp.tool()
+async def inventory_update_by_name(
+    token: str,
+    item_name: str,
+    quantity: Optional[float] = None,
+    unit: Optional[str] = None,
+    storage_location: Optional[str] = None,
+    expiry_date: Optional[str] = None
+) -> Dict[str, Any]:
+    """名前指定での在庫アイテム一括更新
+    
+    指定された名前のアイテムを全て更新します。
+    例: "パン"の賞味期限を全てnullにする場合など。
+    
+    ⚠️ 重要: quantityパラメータは更新する値です。
+    更新対象件数ではありません。件数を指定する必要はありません。
+    例: パンの賞味期限をクリアする場合、quantityは指定不要。
+    
+    Args:
+        token: 認証トークン
+        item_name: アイテム名（必須）
+        quantity: 更新後の数量（オプション、件数ではない）
+        unit: 単位（オプション）
+        storage_location: 保管場所（オプション）
+        expiry_date: 消費期限（オプション、nullを指定する場合は空文字を渡す）
+    
+    Returns:
+        更新結果のメッセージと更新件数
+    """
+    try:
+        user_id = db_client.authenticate(token)
+        
+        update_data = {}
+        if quantity is not None: update_data["quantity"] = quantity
+        if unit: update_data["unit"] = unit
+        if storage_location: update_data["storage_location"] = storage_location
+        if expiry_date is not None: 
+            update_data["expiry_date"] = expiry_date if expiry_date else None
+
+        if not update_data:
+            return {"success": False, "error": "更新するデータがありません"}
+
+        # まず更新対象のアイテム数を確認
+        count_result = db_client.get_client().table("inventory").select("id", count="exact").eq("item_name", item_name).eq("user_id", user_id).execute()
+        if not count_result.data:
+            return {"success": False, "error": f"'{item_name}'が見つかりません"}
+
+        # 更新実行
+        result = db_client.get_client().table("inventory").update(update_data).eq("item_name", item_name).eq("user_id", user_id).execute()
+        
+        if result.data is not None:
+            updated_count = len(result.data) if result.data else 0
+            return {"success": True, "message": f"'{item_name}'を{updated_count}件更新しました", "data": result.data}
+        else:
+            return {"success": False, "error": result.error.message if result.error else "Unknown error"}
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+    except Exception as e:
+        return {"success": False, "error": f"データベース操作エラー: {str(e)}"}
+
 if __name__ == "__main__":
     print("🚀 Database MCP Server (stdio transport) starting...")
-    print("📡 Available tools: inventory_add, inventory_list, inventory_get, inventory_update, inventory_delete")
+    print("📡 Available tools: inventory_add, inventory_list, inventory_get, inventory_update, inventory_delete, inventory_delete_by_name, inventory_update_by_name")
     print("🔗 Transport: stdio")
     print("Press Ctrl+C to stop the server")
     

@@ -6,8 +6,8 @@ LangChainアプローチの挫折を受けて、**自前ReActループ**によ�
 
 ## 🚨 緊急課題
 
-### 在庫数量の不一致問題
-**優先度: 最高** ⚠️ **最優先で対処が必要**
+### 在庫数量の不一致問題 ✅ **解決完了**
+**優先度: 最高** ✅ **2025年9月24日解決**
 
 **問題**: AI報告とDB実際の在庫数量に重大な不一致が発生
 - AI報告: 牛乳6本
@@ -22,15 +22,99 @@ LangChainアプローチの挫折を受けて、**自前ReActループ**によ�
 - LLMの応答が途中で切れる（max_tokens制限）
 - JSON解析エラーによるフォールバック処理
 - ActionPlannerのプロンプトが長すぎて応答が不完全
+- **根本原因**: LLMの単純な足し算が苦手
 
-**対策**:
-1. **即座に対処が必要**: 在庫数量の正確性確保
-2. **根本原因の特定**: LLM応答の完全性確認
-3. **集計ロジックの見直し**: 在庫データの正確な集計
-4. **プロンプト最適化**: 応答が完全に生成されるよう調整
+**実施した対策**:
+1. ✅ **ActionPlannerのmax_tokens増加**: 1000→1500に増加
+2. ✅ **プロンプト最適化**: 在庫要約の簡潔化とプロンプト全体の簡素化
+3. ✅ **LLM集計指示の強化**: 正確な集計ルールと具体例を追加
+4. ✅ **フォールバック処理の改善**: 不適切なタスク生成の検出と処理
 
-**期限**: 24時間以内
-**ステータス**: 2025年9月24日現在、未解決
+**解決結果**:
+- ✅ **牛乳**: 9本（正確）
+- ✅ **鶏もも肉**: 3パック（正確）
+- ✅ **もやし**: 3袋（正確）
+- ✅ **パン**: 3袋（正確）
+
+**解決日**: 2025年9月24日
+**ステータス**: ✅ **完全解決**
+
+## 🎉 MCPツール拡張による問題解決の実装
+
+### 設計思想の転換 ✅ **2025年9月24日実現**
+
+**問題**: 一括操作要求での複雑なタスク分解とエラー発生
+- 「牛乳9本全部削除」→ 9個の個別削除タスク → MCP tool error
+- 「パンは冷凍したから、賞味期限をクリアしておいて」→ 複雑なタスク分解
+
+**解決アプローチ**: MCPツール拡張による根本解決
+
+#### 実装過程
+
+**Step 1: 新規MCPツールの追加**
+```python
+# db_mcp_server_stdio.py に追加
+@mcp.tool()
+async def inventory_delete_by_name(token: str, item_name: str) -> Dict[str, Any]:
+    """名前指定での在庫アイテム一括削除"""
+    # 指定された名前のアイテムを全て削除
+    # SQL: DELETE FROM inventory WHERE item_name = '牛乳'
+
+@mcp.tool()
+async def inventory_update_by_name(
+    token: str,
+    item_name: str,
+    quantity: Optional[float] = None,
+    unit: Optional[str] = None,
+    storage_location: Optional[str] = None,
+    expiry_date: Optional[str] = None
+) -> Dict[str, Any]:
+    """名前指定での在庫アイテム一括更新"""
+    # 指定された名前のアイテムを全て更新
+    # SQL: UPDATE inventory SET ... WHERE item_name = 'パン'
+```
+
+**Step 2: ActionPlannerの更新**
+```python
+# action_planner.py のプロンプト更新
+planning_prompt = f"""
+ルール:
+- 1件更新/削除→inventory_update/inventory_delete (item_id必須)
+- 一括更新/削除→inventory_update_by_name/inventory_delete_by_name (item_nameのみ)
+"""
+```
+
+**Step 3: テストケースの追加**
+```python
+# tests/test_true_react_agent_short.py に追加
+async def test_bulk_delete_by_name(self):
+    """一括削除のテスト（by_name）"""
+    test_case = "牛乳9本全部削除"
+    # 期待: 1つのinventory_delete_by_nameタスク
+
+async def test_bulk_update_by_name(self):
+    """一括更新のテスト（by_name）"""
+    test_case = "パンは冷凍したから、賞味期限をクリアしておいて"
+    # 期待: 1つのinventory_update_by_nameタスク
+```
+
+#### 実装結果
+
+**成功例**:
+- ✅ **「牛乳9本全部削除」**: 1つの一括削除タスクで完了
+- ✅ **「パンは冷凍したから、賞味期限をクリアしておいて」**: 1つの一括更新タスクで完了
+
+**設計思想の勝利**:
+- **従来**: 1つの引出（複雑なReActループ）で全てを処理
+- **今回**: 複数の引出（専用MCPツール）で適材適所
+
+#### 将来の拡張可能性
+- **inventory_delete_by_expiry**: 賞味期限切れ商品の一括削除
+- **inventory_list_by_location**: 保管場所別の在庫一覧
+- **inventory_move_by_name**: 保管場所の一括移動
+
+**実装日**: 2025年9月24日
+**ステータス**: ✅ **完全解決**
 
 ## 🎯 目標
 

@@ -50,59 +50,48 @@ class ActionPlanner:
         # LLMにタスク分解を依頼
         inventory_summary = ""
         if current_inventory:
-            # 在庫状況を簡潔に要約
+            # 在庫状況を極めて簡潔に要約
             item_counts = {}
             for item in current_inventory:
                 name = item.get("item_name", "不明")
                 if name not in item_counts:
-                    item_counts[name] = []
-                item_counts[name].append({
-                    "id": item.get("id"),
-                    "quantity": item.get("quantity", 1)
-                })
+                    item_counts[name] = {"count": 0, "ids": []}
+                item_counts[name]["count"] += 1
+                item_counts[name]["ids"].append(item.get("id"))
+            
+            # さらに簡潔な形式に変換
+            simple_summary = {}
+            for name, data in item_counts.items():
+                simple_summary[name] = f"{data['count']}件"
             
             inventory_summary = f"""
-現在の在庫要約:
-{json.dumps(item_counts, ensure_ascii=False, indent=2)}
+在庫: {json.dumps(simple_summary, ensure_ascii=False)}
 """
         
         planning_prompt = f"""
-ユーザー要求を分析し、適切なタスクに分解してください。
-
-ユーザー要求: "{user_request}"
-
-利用可能なツール: {', '.join(available_tools)}
+要求: "{user_request}"
+ツール: {', '.join(available_tools)}
 {inventory_summary}
 
-重要な判断基準:
-1. **挨拶や一般的な会話の場合**: タスクは生成せず、空の配列を返す
-   - 例: "こんにちは", "おはよう", "こんばんは", "お疲れ様", "ありがとう"
-   - 例: "調子はどう？", "元気？", "今日はいい天気ですね"
+ルール:
+- 挨拶→空配列
+- 在庫確認→inventory_list
+- 追加→inventory_add
+- 1件更新/削除→inventory_update/inventory_delete (item_id必須)
+- 一括更新/削除→inventory_update_by_name/inventory_delete_by_name (item_nameのみ)
 
-2. **在庫管理に関連する要求の場合**: 適切なツールを選択
-   - 在庫確認: inventory_list
-   - 在庫追加: inventory_add
-   - 在庫更新: inventory_update (item_id必須)
-   - 在庫削除: inventory_delete (item_id必須)
-
-3. **タスク生成のルール**:
-   - 削除・更新は必ずitem_idを指定
-   - 在庫状況から適切なIDを選択
-   - 異なるアイテムは個別タスクに分解
-   - 同一アイテムでも個別IDで処理
-
-以下のJSON形式で回答してください:
+JSON:
 {{
     "tasks": [
         {{
-            "description": "タスクの説明",
-            "tool": "使用するツール名",
+            "description": "説明",
+            "tool": "ツール名",
             "parameters": {{
-                "item_id": "対象のID",
-                "item_name": "アイテム名",
+                "item_id": "ID",
+                "item_name": "名前",
                 "quantity": 数量,
                 "unit": "単位",
-                "storage_location": "保管場所"
+                "storage_location": "場所"
             }},
             "priority": 1,
             "dependencies": []
@@ -115,7 +104,7 @@ class ActionPlanner:
             response = self.client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[{"role": "user", "content": planning_prompt}],
-                max_tokens=1000,
+                max_tokens=1500,
                 temperature=0.3
             )
             
@@ -223,7 +212,7 @@ class ActionPlanner:
         greeting_patterns = ["こんにちは", "おはよう", "こんばんは", "お疲れ様", "ありがとう", "調子はどう", "元気", "天気"]
         if any(pattern in user_request for pattern in greeting_patterns):
             # 挨拶なのに在庫操作タスクがある場合は不適切
-            inventory_tools = ["inventory_add", "inventory_update", "inventory_delete"]
+            inventory_tools = ["inventory_add", "inventory_update", "inventory_delete", "inventory_update_by_name", "inventory_delete_by_name"]
             if any(task.tool in inventory_tools for task in tasks):
                 logger.warning(f"⚠️ [判定] 挨拶なのに在庫操作タスクを生成: {user_request}")
                 return True

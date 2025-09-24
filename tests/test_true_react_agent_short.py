@@ -163,6 +163,52 @@ class TrueReactAgentShortTester:
             logger.error(f"❌ テスト5 エラー: {str(e)}")
             logger.error(traceback.format_exc())
     
+    async def test_bulk_delete_by_name(self):
+        """一括削除のテスト（by_name）"""
+        logger.info("🧪 テスト6: 一括削除（by_name）")
+        
+        test_case = "牛乳9本全部削除"
+        logger.info(f"🧪 テスト6: {test_case}")
+        
+        try:
+            response = await self._send_chat_request(test_case)
+            logger.info(f"✅ レスポンス: {response}")
+            
+            # 一括削除の確認
+            if "削除" in response and "完了" in response:
+                logger.info(f"✅ テスト6 成功: 一括削除完了")
+            else:
+                logger.warning(f"⚠️ テスト6 不明な結果: {response[:100]}...")
+            
+        except Exception as e:
+            logger.error(f"❌ テスト6 エラー: {str(e)}")
+            logger.error(traceback.format_exc())
+        
+        await asyncio.sleep(1)
+    
+    async def test_bulk_update_by_name(self):
+        """一括更新のテスト（by_name）"""
+        logger.info("🧪 テスト7: 一括更新（by_name）")
+        
+        test_case = "パンは冷凍したから、賞味期限をクリアしておいて"
+        logger.info(f"🧪 テスト7: {test_case}")
+        
+        try:
+            response = await self._send_chat_request(test_case)
+            logger.info(f"✅ レスポンス: {response}")
+            
+            # 一括更新の確認
+            if "更新" in response and "完了" in response:
+                logger.info(f"✅ テスト7 成功: 一括更新完了")
+            else:
+                logger.warning(f"⚠️ テスト7 不明な結果: {response[:100]}...")
+            
+        except Exception as e:
+            logger.error(f"❌ テスト7 エラー: {str(e)}")
+            logger.error(traceback.format_exc())
+        
+        await asyncio.sleep(1)
+    
     async def _send_chat_request(self, message: str) -> str:
         """チャットリクエストを送信"""
         try:
@@ -233,6 +279,12 @@ class TrueReactAgentShortTester:
             await asyncio.sleep(2)
             
             await self.test_inventory_status()
+            await asyncio.sleep(2)
+            
+            await self.test_bulk_delete_by_name()
+            await asyncio.sleep(2)
+            
+            await self.test_bulk_update_by_name()
             
         except Exception as e:
             logger.error(f"❌ テスト実行エラー: {str(e)}")
