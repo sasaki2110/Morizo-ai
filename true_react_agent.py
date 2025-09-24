@@ -37,7 +37,12 @@ class TrueReactAgent:
         
         try:
             # Phase 1: 行動計画立案
-            tasks = self.planner.create_plan(user_request, available_tools)
+            tasks = self.planner.create_plan(user_request, available_tools, user_session.current_inventory)
+            
+            # タスクが空の場合（挨拶など）は直接LLM応答を返す
+            if not tasks or len(tasks) == 0:
+                logger.info("🤖 [真のReAct] ツール不要の要求を検出")
+                return await self._generate_simple_response(user_request)
             
             if not self.planner.validate_plan(tasks):
                 logger.error("❌ [真のReAct] タスクプランが無効です")
@@ -74,7 +79,7 @@ class TrueReactAgent:
                     self.task_manager.mark_task_failed(current_task, result.get("error"))
             
             # Phase 4: 完了報告
-            return self._generate_completion_report(user_request)
+            return await self._generate_completion_report(user_request)
             
         except Exception as e:
             logger.error(f"❌ [真のReAct] 処理エラー: {str(e)}")
@@ -231,15 +236,130 @@ class TrueReactAgent:
             logger.error(f"❌ [行動] エラー詳細: {type(e).__name__}")
             return {"success": False, "error": str(e)}
     
-    def _generate_completion_report(self, user_request: str) -> str:
+    async def _generate_completion_report(self, user_request: str) -> str:
         """
-        完了報告を生成する
+        完了報告を生成する（LLMによる最終結果整形）
         
         Args:
             user_request: 元のユーザー要求
             
         Returns:
             完了報告
+        """
+        try:
+            # 1. 完了したタスクの実行結果を収集
+            task_results = self._collect_task_results()
+            
+            # 2. LLMに最終結果の整形を依頼
+            final_response = await self._generate_final_response_with_llm(
+                user_request, task_results
+            )
+            
+            logger.info(f"✅ [完了報告] ユーザー要求: {user_request}")
+            return final_response
+            
+        except Exception as e:
+            logger.error(f"❌ [完了報告] エラー: {str(e)}")
+            # フォールバック: 従来の報告方式
+            return self._generate_fallback_report(user_request)
+    
+    def _collect_task_results(self) -> List[Dict[str, Any]]:
+        """
+        完了したタスクの実行結果を収集する
+        
+        Returns:
+            タスク結果のリスト
+        """
+        results = []
+        
+        for task in self.task_manager.completed_tasks:
+            if task.result and task.result.get("success"):
+                results.append({
+                    "tool": task.tool,
+                    "description": task.description,
+                    "result": task.result.get("result", {}),
+                    "status": "completed"
+                })
+            else:
+                results.append({
+                    "tool": task.tool,
+                    "description": task.description,
+                    "error": task.result.get("error", "不明なエラー") if task.result else "結果なし",
+                    "status": "failed"
+                })
+        
+        logger.info(f"📊 [結果収集] {len(results)}個のタスク結果を収集")
+        return results
+    
+    async def _generate_final_response_with_llm(self, user_request: str, task_results: List[Dict[str, Any]]) -> str:
+        """
+        LLMに最終結果の整形を依頼
+        
+        Args:
+            user_request: 元のユーザー要求
+            task_results: タスク実行結果
+            
+        Returns:
+            LLMが生成した最終回答
+        """
+        try:
+            # タスク結果を整理
+            results_summary = []
+            for result in task_results:
+                if result["status"] == "completed":
+                    results_summary.append({
+                        "tool": result["tool"],
+                        "description": result["description"],
+                        "result": result["result"]
+                    })
+                else:
+                    results_summary.append({
+                        "tool": result["tool"],
+                        "description": result["description"],
+                        "error": result["error"]
+                    })
+            
+            # LLMに整形を依頼
+            prompt = f"""
+ユーザーの要求: {user_request}
+
+実行されたタスクとその結果:
+{json.dumps(results_summary, ensure_ascii=False, indent=2)}
+
+上記の結果を基に、ユーザーに適切な回答を生成してください。
+
+指示:
+- 在庫リストの場合は、実際の在庫データを含めて回答してください
+- その他の場合は、実行結果を分かりやすく説明してください
+- 自然で親しみやすい日本語で回答してください
+- エラーが発生した場合は、その内容も含めて説明してください
+- タスク状況の統計情報は含めず、ユーザーが求める情報に集中してください
+"""
+            
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=800,
+                temperature=0.7
+            )
+            
+            final_response = response.choices[0].message.content
+            logger.info(f"🤖 [LLM整形] 最終回答を生成: {len(final_response)}文字")
+            return final_response
+            
+        except Exception as e:
+            logger.error(f"❌ [LLM整形] エラー: {str(e)}")
+            raise e
+    
+    def _generate_fallback_report(self, user_request: str) -> str:
+        """
+        フォールバック用の完了報告（従来方式）
+        
+        Args:
+            user_request: 元のユーザー要求
+            
+        Returns:
+            フォールバック報告
         """
         status = self.task_manager.get_task_status()
         summary = self.task_manager.get_task_summary()
@@ -261,5 +381,43 @@ class TrueReactAgent:
 ✅ すべてのタスクが正常に完了しました。
 """
         
-        logger.info(f"✅ [完了報告] ユーザー要求: {user_request}")
+        logger.info(f"✅ [フォールバック報告] ユーザー要求: {user_request}")
         return report
+    
+    async def _generate_simple_response(self, user_request: str) -> str:
+        """
+        ツール不要の要求（挨拶など）に対するシンプルな応答を生成
+        
+        Args:
+            user_request: ユーザーの要求
+            
+        Returns:
+            シンプルな応答
+        """
+        try:
+            prompt = f"""
+ユーザーからの要求: {user_request}
+
+これは挨拶や一般的な会話の要求です。在庫管理ツールは使用せず、自然で親しみやすい日本語で応答してください。
+
+指示:
+- 挨拶には適切に応答してください
+- 在庫管理についての質問があれば、お手伝いできることを説明してください
+- 自然で親しみやすい日本語で回答してください
+- 短めで簡潔な回答を心がけてください
+"""
+            
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=200,
+                temperature=0.7
+            )
+            
+            simple_response = response.choices[0].message.content
+            logger.info(f"🤖 [シンプル応答] 応答を生成: {len(simple_response)}文字")
+            return simple_response
+            
+        except Exception as e:
+            logger.error(f"❌ [シンプル応答] エラー: {str(e)}")
+            return "こんにちは！何かお手伝いできることがあれば教えてください。"

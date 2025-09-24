@@ -123,26 +123,51 @@ class TrueReactAgentShortTester:
         
         await asyncio.sleep(2)  # 2秒待機
     
+    async def test_simple_greeting(self):
+        """単純な挨拶のテスト（ツール不要パターン）"""
+        logger.info("🧪 テスト4: 単純な挨拶（ツール不要パターン）")
+        
+        test_case = "こんにちは"
+        logger.info(f"🧪 テスト4: {test_case}")
+        
+        try:
+            response = await self._send_chat_request(test_case)
+            logger.info(f"✅ レスポンス: {response}")
+            
+            # 挨拶の確認
+            if "こんにちは" in response or "おはよう" in response or "こんばんは" in response:
+                logger.info(f"✅ テスト4 成功: 挨拶応答完了")
+            else:
+                logger.warning(f"⚠️ テスト4 不明な結果: {response[:100]}...")
+            
+        except Exception as e:
+            logger.error(f"❌ テスト4 エラー: {str(e)}")
+            logger.error(traceback.format_exc())
+        
+        await asyncio.sleep(1)  # 1秒待機
+    
     async def test_inventory_status(self):
         """在庫状況確認のテスト"""
-        logger.info("🧪 テスト4: 在庫状況確認")
+        logger.info("🧪 テスト5: 在庫状況確認")
         
         try:
             response = await self._send_chat_request("今の在庫を教えて")
             logger.info(f"✅ レスポンス: {response}")
             
             if "在庫" in response or "牛乳" in response or "パン" in response:
-                logger.info("✅ テスト4 成功: 在庫状況取得完了")
+                logger.info("✅ テスト5 成功: 在庫状況取得完了")
             else:
-                logger.warning(f"⚠️ テスト4 不明な結果: {response[:100]}...")
+                logger.warning(f"⚠️ テスト5 不明な結果: {response[:100]}...")
                 
         except Exception as e:
-            logger.error(f"❌ テスト4 エラー: {str(e)}")
+            logger.error(f"❌ テスト5 エラー: {str(e)}")
             logger.error(traceback.format_exc())
     
     async def _send_chat_request(self, message: str) -> str:
         """チャットリクエストを送信"""
         try:
+            print(f"\n📤 リクエスト送信: {message}")
+            
             response = await self.client.post(
                 f"{self.base_url}/chat",
                 headers={
@@ -154,14 +179,29 @@ class TrueReactAgentShortTester:
             
             if response.status_code == 200:
                 result = response.json()
-                return result.get("response", "レスポンスが空です")
+                response_text = result.get("response", "レスポンスが空です")
+                
+                # main.pyの最終レスポンスを表示
+                print(f"📥 最終レスポンス:")
+                print(f"   {response_text}")
+                print(f"📊 レスポンス詳細:")
+                print(f"   - 成功: {result.get('success', 'N/A')}")
+                print(f"   - モデル: {result.get('model_used', 'N/A')}")
+                print(f"   - ユーザーID: {result.get('user_id', 'N/A')}")
+                print(f"   - 文字数: {len(response_text)}文字")
+                
+                return response_text
             else:
                 logger.error(f"❌ HTTPエラー: {response.status_code}")
-                return f"HTTPエラー: {response.status_code}"
+                error_msg = f"HTTPエラー: {response.status_code}"
+                print(f"❌ {error_msg}")
+                return error_msg
                 
         except Exception as e:
             logger.error(f"❌ リクエストエラー: {str(e)}")
-            return f"リクエストエラー: {str(e)}"
+            error_msg = f"リクエストエラー: {str(e)}"
+            print(f"❌ {error_msg}")
+            return error_msg
     
     async def cleanup(self):
         """テストのクリーンアップ（DBクリーンアップなし）"""
@@ -180,6 +220,9 @@ class TrueReactAgentShortTester:
         
         try:
             # テスト実行
+            await self.test_simple_greeting()
+            await asyncio.sleep(2)
+            
             await self.test_single_item_registration()
             await asyncio.sleep(2)
             

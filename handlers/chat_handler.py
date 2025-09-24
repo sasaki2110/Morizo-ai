@@ -101,6 +101,9 @@ async def handle_chat_request(request: ChatRequest, auth_data) -> ChatResponse:
         logger.info(f"📊 [統計] セッション継続時間: {user_session.get_session_duration().total_seconds()/60:.1f}分")
         logger.info(f"📊 [統計] 操作履歴件数: {len(user_session.operation_history)}件")
         
+        # 最終レスポンスをログに出力
+        logger.info(f"✅ [レスポンス] {result.response}")
+        
         return result
         
     except Exception as e:

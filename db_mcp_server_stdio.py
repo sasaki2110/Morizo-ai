@@ -190,6 +190,10 @@ async def inventory_update(
     個別在庫法に従い、1つのアイテムを1件として更新します。
     複数のアイテムを更新する場合は、このツールを複数回呼び出してください。
     
+    ⚠️ 重要: item_idパラメータの指定を強く推奨します。
+    item_idを指定しない場合は、item_nameで最新のアイテムを更新しますが、
+    意図しないアイテムが更新される可能性があります。
+    
     Args:
         token: 認証トークン
         item_name: アイテム名（必須）
@@ -197,7 +201,7 @@ async def inventory_update(
         unit: 単位（オプション）
         storage_location: 保管場所（オプション）
         expiry_date: 消費期限（オプション）
-        item_id: アイテムID（オプション、指定しない場合は最新のアイテムを更新）
+        item_id: アイテムID（推奨、指定しない場合は最新のアイテムを更新）
     
     Returns:
         更新されたアイテムの情報
@@ -240,9 +244,12 @@ async def inventory_delete(token: str, item_id: str) -> Dict[str, Any]:
     個別在庫法に従い、1つのアイテムを1件として削除します。
     複数のアイテムを削除する場合は、このツールを複数回呼び出してください。
     
+    ⚠️ 重要: item_idパラメータは必須です。
+    削除対象を特定するために、必ずitem_idを指定してください。
+    
     Args:
         token: 認証トークン
-        item_id: アイテムID
+        item_id: アイテムID（必須）
     
     Returns:
         削除結果のメッセージ

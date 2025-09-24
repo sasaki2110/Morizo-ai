@@ -33,13 +33,14 @@ class ActionPlanner:
         self.client = openai_client
         self.task_counter = 0
     
-    def create_plan(self, user_request: str, available_tools: List[str]) -> List[Task]:
+    def create_plan(self, user_request: str, available_tools: List[str], current_inventory: List[Dict[str, Any]] = None) -> List[Task]:
         """
         ユーザーの要求を分析し、実行可能なタスクに分解する
         
         Args:
             user_request: ユーザーの要求
             available_tools: 利用可能なツール一覧
+            current_inventory: 現在の在庫状況（ID情報含む）
             
         Returns:
             実行可能なタスクのリスト
@@ -47,27 +48,57 @@ class ActionPlanner:
         logger.info(f"🧠 [計画立案] ユーザー要求を分析: {user_request}")
         
         # LLMにタスク分解を依頼
+        inventory_summary = ""
+        if current_inventory:
+            # 在庫状況を簡潔に要約
+            item_counts = {}
+            for item in current_inventory:
+                name = item.get("item_name", "不明")
+                if name not in item_counts:
+                    item_counts[name] = []
+                item_counts[name].append({
+                    "id": item.get("id"),
+                    "quantity": item.get("quantity", 1)
+                })
+            
+            inventory_summary = f"""
+現在の在庫要約:
+{json.dumps(item_counts, ensure_ascii=False, indent=2)}
+"""
+        
         planning_prompt = f"""
-以下のユーザー要求を分析し、実行可能なタスクに分解してください。
+ユーザー要求を分析し、適切なタスクに分解してください。
 
 ユーザー要求: "{user_request}"
 
-利用可能なツール:
-{json.dumps(available_tools, ensure_ascii=False, indent=2)}
+利用可能なツール: {', '.join(available_tools)}
+{inventory_summary}
 
-タスク分解のルール:
-1. 複数のアイテムがある場合は、個別のタスクに分解
-2. 個別在庫法に従い、各アイテムを個別に登録
-3. 依存関係がある場合は、dependenciesに記録
-4. 優先度を適切に設定（1=高, 2=中, 3=低）
+重要な判断基準:
+1. **挨拶や一般的な会話の場合**: タスクは生成せず、空の配列を返す
+   - 例: "こんにちは", "おはよう", "こんばんは", "お疲れ様", "ありがとう"
+   - 例: "調子はどう？", "元気？", "今日はいい天気ですね"
 
-以下のJSON形式で回答してください（マークダウンのコードブロックは使用しないでください）:
+2. **在庫管理に関連する要求の場合**: 適切なツールを選択
+   - 在庫確認: inventory_list
+   - 在庫追加: inventory_add
+   - 在庫更新: inventory_update (item_id必須)
+   - 在庫削除: inventory_delete (item_id必須)
+
+3. **タスク生成のルール**:
+   - 削除・更新は必ずitem_idを指定
+   - 在庫状況から適切なIDを選択
+   - 異なるアイテムは個別タスクに分解
+   - 同一アイテムでも個別IDで処理
+
+以下のJSON形式で回答してください:
 {{
     "tasks": [
         {{
             "description": "タスクの説明",
             "tool": "使用するツール名",
             "parameters": {{
+                "item_id": "対象のID",
                 "item_name": "アイテム名",
                 "quantity": 数量,
                 "unit": "単位",
@@ -124,11 +155,49 @@ class ActionPlanner:
                 self.task_counter += 1
             
             logger.info(f"🧠 [計画立案] {len(tasks)}個のタスクを生成")
+            
+            # 不適切なタスク生成のチェック
+            if self._is_inappropriate_task_generation(user_request, tasks):
+                logger.warning(f"⚠️ [計画立案] 不適切なタスク生成を検出: {user_request}")
+                logger.warning(f"⚠️ [計画立案] 生成されたタスク数: {len(tasks)}")
+                return []  # 空のタスクリストを返す
+            
             return tasks
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"❌ [計画立案] JSON解析エラー: {str(e)}")
+            logger.error(f"❌ [計画立案] 不完全なJSON: {result[:200]}...")
+            
+            # JSON解析エラーの場合、適切なツールを推測してフォールバック
+            if "在庫" in user_request or "教えて" in user_request:
+                # 在庫確認の場合はinventory_listを使用
+                fallback_task = Task(
+                    id=f"task_{self.task_counter}",
+                    description="在庫一覧を取得する",
+                    tool="inventory_list",
+                    parameters={},
+                    priority=1
+                )
+            elif "削除" in user_request:
+                # 削除の場合はエラーとして処理
+                logger.error("❌ [計画立案] 削除要求でJSON解析エラー - 適切なタスクを生成できません")
+                return []
+            else:
+                # その他の場合はllm_chatを使用
+                fallback_task = Task(
+                    id=f"task_{self.task_counter}",
+                    description=f"ユーザー要求の処理: {user_request}",
+                    tool="llm_chat",
+                    parameters={"message": user_request},
+                    priority=1
+                )
+            
+            self.task_counter += 1
+            return [fallback_task]
             
         except Exception as e:
             logger.error(f"❌ [計画立案] エラー: {str(e)}")
-            # フォールバック: 単一タスクとして処理
+            # その他のエラーの場合
             fallback_task = Task(
                 id=f"task_{self.task_counter}",
                 description=f"ユーザー要求の処理: {user_request}",
@@ -138,6 +207,50 @@ class ActionPlanner:
             )
             self.task_counter += 1
             return [fallback_task]
+    
+    def _is_inappropriate_task_generation(self, user_request: str, tasks: List[Task]) -> bool:
+        """
+        不適切なタスク生成を判定する
+        
+        Args:
+            user_request: ユーザーの要求
+            tasks: 生成されたタスクリスト
+            
+        Returns:
+            True if inappropriate, False otherwise
+        """
+        # 1. 挨拶パターンのチェック
+        greeting_patterns = ["こんにちは", "おはよう", "こんばんは", "お疲れ様", "ありがとう", "調子はどう", "元気", "天気"]
+        if any(pattern in user_request for pattern in greeting_patterns):
+            # 挨拶なのに在庫操作タスクがある場合は不適切
+            inventory_tools = ["inventory_add", "inventory_update", "inventory_delete"]
+            if any(task.tool in inventory_tools for task in tasks):
+                logger.warning(f"⚠️ [判定] 挨拶なのに在庫操作タスクを生成: {user_request}")
+                return True
+        
+        # 2. タスク数の妥当性チェック
+        if len(tasks) > 2 and len(user_request) < 10:  # 短い要求なのに多数のタスク
+            logger.warning(f"⚠️ [判定] 短い要求なのに多数のタスク: {len(tasks)}個")
+            return True
+        
+        # 3. 存在しないIDのチェック
+        fake_ids = ["001", "002", "003", "商品A", "商品B", "商品C"]
+        for task in tasks:
+            if task.tool in ["inventory_update", "inventory_delete"]:
+                item_id = task.parameters.get("item_id", "")
+                if item_id in fake_ids:
+                    logger.warning(f"⚠️ [判定] 存在しないIDを使用: {item_id}")
+                    return True
+        
+        # 4. 在庫状況にないアイテム名のチェック
+        fake_items = ["商品A", "商品B", "商品C"]
+        for task in tasks:
+            item_name = task.parameters.get("item_name", "")
+            if item_name in fake_items:
+                logger.warning(f"⚠️ [判定] 存在しないアイテム名を使用: {item_name}")
+                return True
+        
+        return False
     
     def validate_plan(self, tasks: List[Task]) -> bool:
         """
