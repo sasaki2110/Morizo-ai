@@ -1,6 +1,11 @@
 """
-行動計画立案システム
-ユーザーの要求を分析し、実行可能なタスクに分解する
+Morizo AI - Smart Pantry AI Agent
+Copyright (c) 2024 Morizo AI Project. All rights reserved.
+
+This software is proprietary and confidential. Unauthorized copying, modification,
+distribution, or use is strictly prohibited without explicit written permission.
+
+For licensing inquiries, contact: [contact@morizo-ai.com]
 """
 
 import json
@@ -10,6 +15,15 @@ from dataclasses import dataclass
 from openai import OpenAI
 
 logger = logging.getLogger("morizo_ai.planner")
+
+# 定数定義
+MAX_TOKENS = 1500
+
+def estimate_tokens(text: str) -> int:
+    """テキストのトークン数を概算する（日本語は1文字=1トークン、英語は4文字=1トークン）"""
+    japanese_chars = sum(1 for c in text if '\u3040' <= c <= '\u309F' or '\u30A0' <= c <= '\u30FF' or '\u4E00' <= c <= '\u9FAF')
+    other_chars = len(text) - japanese_chars
+    return japanese_chars + (other_chars // 4)
 
 @dataclass
 class Task:
@@ -33,40 +47,23 @@ class ActionPlanner:
         self.client = openai_client
         self.task_counter = 0
     
-    def create_plan(self, user_request: str, available_tools: List[str], current_inventory: List[Dict[str, Any]] = None) -> List[Task]:
+    def create_plan(self, user_request: str, available_tools: List[str]) -> List[Task]:
         """
         ユーザーの要求を分析し、実行可能なタスクに分解する
         
         Args:
             user_request: ユーザーの要求
             available_tools: 利用可能なツール一覧
-            current_inventory: 現在の在庫状況（ID情報含む）
             
         Returns:
             実行可能なタスクのリスト
         """
         logger.info(f"🧠 [計画立案] ユーザー要求を分析: {user_request}")
         
+        # MCPツールの説明を取得
+        tools_description = self._get_tools_description(available_tools)
+        
         # LLMにタスク分解を依頼
-        inventory_summary = ""
-        if current_inventory:
-            # 在庫状況を極めて簡潔に要約
-            item_counts = {}
-            for item in current_inventory:
-                name = item.get("item_name", "不明")
-                if name not in item_counts:
-                    item_counts[name] = {"count": 0, "ids": []}
-                item_counts[name]["count"] += 1
-                item_counts[name]["ids"].append(item.get("id"))
-            
-            # さらに簡潔な形式に変換
-            simple_summary = {}
-            for name, data in item_counts.items():
-                simple_summary[name] = f"{data['count']}件"
-            
-            inventory_summary = f"""
-在庫: {json.dumps(simple_summary, ensure_ascii=False)}
-"""
         
         planning_prompt = f"""
 ユーザー要求を分析し、適切なタスクに分解してください。
@@ -74,7 +71,8 @@ class ActionPlanner:
 ユーザー要求: "{user_request}"
 
 利用可能なツール: {', '.join(available_tools)}
-{inventory_summary}
+
+{tools_description}
 
 重要な判断基準:
 1. **挨拶や一般的な会話の場合**: タスクは生成せず、空の配列を返す
@@ -84,8 +82,8 @@ class ActionPlanner:
 2. **在庫管理に関連する要求の場合**: 適切なツールを選択
    - 在庫確認: inventory_list
    - 在庫追加: inventory_add
-   - 在庫更新: inventory_update (item_id必須)
-   - 在庫削除: inventory_delete (item_id必須)
+   - 在庫更新: inventory_update_by_id (item_id必須)
+   - 在庫削除: inventory_delete_by_id (item_id必須)
    - 一括更新: inventory_update_by_name (item_nameのみ)
    - 一括削除: inventory_delete_by_name (item_nameのみ)
 
@@ -95,7 +93,7 @@ class ActionPlanner:
    - 異なるアイテムは個別タスクに分解
    - 同一アイテムでも個別IDで処理
 
-**重要**: 必ず以下のJSON形式で回答してください。他の形式は使用禁止です。
+**重要**: 必ず以下のJSON形式で回答してください：
 
 {{
     "tasks": [
@@ -103,24 +101,29 @@ class ActionPlanner:
             "description": "タスクの説明",
             "tool": "使用するツール名",
             "parameters": {{
-                "item_id": "対象のID",
-                "item_name": "アイテム名",
-                "quantity": 数量,
-                "unit": "単位",
-                "storage_location": "保管場所"
+                // ツールが求めるJSON形式で記述
             }},
             "priority": 1,
             "dependencies": []
         }}
     ]
 }}
+
+ツールを利用しない場合は、親しみやすい自然言語で回答してください。
 """
         
         try:
+            # トークン数予測
+            estimated_tokens = estimate_tokens(planning_prompt)
+            overage_rate = (estimated_tokens / MAX_TOKENS) * 100
+            
+            logger.info(f"🧠 [計画立案] プロンプト全文 (総トークン数: {estimated_tokens}/{MAX_TOKENS}, 超過率: {overage_rate:.1f}%):")
+            logger.info(f"🧠 [計画立案] {planning_prompt}")
+            
             response = self.client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[{"role": "user", "content": planning_prompt}],
-                max_tokens=1500,
+                max_tokens=MAX_TOKENS,
                 temperature=0.3
             )
             
@@ -189,6 +192,119 @@ class ActionPlanner:
             )
             self.task_counter += 1
             return [fallback_task]
+    
+    def _get_tools_description(self, available_tools: List[str]) -> str:
+        """MCPツールの説明を取得"""
+        # 簡易的なツール説明（実際のMCPツールから動的に取得する場合は、MCPクライアントを使用）
+        tool_descriptions = {
+            "inventory_add": """
+📋 inventory_add: 在庫にアイテムを1件追加
+🎯 使用場面: 「入れる」「追加」「保管」等のキーワードでユーザーが新たに在庫を作成する場合
+⚠️ 重要: item_idは自動採番されるため、パラメータには不要です。
+📋 JSON形式:
+{
+    "description": "アイテムを在庫に追加する",
+    "tool": "inventory_add",
+    "parameters": {
+        "item_name": "アイテム名",
+        "quantity": 数量,
+        "unit": "単位",
+        "storage_location": "保管場所",
+        "expiry_date": "消費期限（オプション）"
+    },
+    "priority": 1,
+    "dependencies": []
+}
+""",
+            "inventory_update_by_id": """
+📋 inventory_update_by_id: ID指定での在庫アイテム1件更新
+🎯 使用場面: 「変更」「変える」「替える」「かえる」「更新」「クリア」等のキーワードでユーザーが在庫を更新する場合
+⚠️ 重要: item_idは**必須です**。必ず在庫情報のitem_idを確認して、設定してください。
+📋 JSON形式:
+{
+    "description": "アイテムを更新する",
+    "tool": "inventory_update_by_id",
+    "parameters": {
+        "item_id": "対象のID（必須）",
+        "item_name": "アイテム名",
+        "quantity": 数量,
+        "unit": "単位",
+        "storage_location": "保管場所",
+        "expiry_date": "消費期限"
+    },
+    "priority": 1,
+    "dependencies": []
+}
+""",
+            "inventory_delete_by_id": """
+📋 inventory_delete_by_id: ID指定での在庫アイテム1件削除
+🎯 使用場面: 「削除」「消す」「捨てる」「処分」等のキーワードでユーザーが特定のアイテムを削除する場合
+⚠️ 重要: item_idパラメータは必須です。
+📋 JSON形式:
+{
+    "description": "アイテムを削除する",
+    "tool": "inventory_delete_by_id",
+    "parameters": {
+        "item_id": "対象のID（必須）"
+    },
+    "priority": 1,
+    "dependencies": []
+}
+""",
+            "inventory_update_by_name": """
+📋 inventory_update_by_name: 名前指定での在庫アイテム一括更新
+🎯 使用場面: 「全部」「一括」「全て」等のキーワードで複数のアイテムを同時に更新する場合
+⚠️ 重要: quantityパラメータは更新する値です。更新対象件数ではありません。
+📋 JSON形式:
+{
+    "description": "アイテムを一括更新する",
+    "tool": "inventory_update_by_name",
+    "parameters": {
+        "item_name": "アイテム名（必須）",
+        "quantity": "更新後の数量（オプション）",
+        "unit": "単位（オプション）",
+        "storage_location": "保管場所（オプション）",
+        "expiry_date": "消費期限（オプション）"
+    },
+    "priority": 1,
+    "dependencies": []
+}
+""",
+            "inventory_delete_by_name": """
+📋 inventory_delete_by_name: 名前指定での在庫アイテム一括削除
+🎯 使用場面: 「全部」「一括」「全て」等のキーワードで複数のアイテムを同時に削除する場合
+📋 JSON形式:
+{
+    "description": "アイテムを一括削除する",
+    "tool": "inventory_delete_by_name",
+    "parameters": {
+        "item_name": "アイテム名（必須）"
+    },
+    "priority": 1,
+    "dependencies": []
+}
+""",
+            "inventory_list": """
+📋 inventory_list: 在庫一覧を取得
+🎯 使用場面: 「在庫を教えて」「今の在庫は？」等のキーワードでユーザーが在庫状況を確認する場合
+📋 JSON形式:
+{
+    "description": "在庫一覧を取得する",
+    "tool": "inventory_list",
+    "parameters": {},
+    "priority": 1,
+    "dependencies": []
+}
+"""
+        }
+        
+        # 利用可能なツールの説明を結合
+        descriptions = []
+        for tool in available_tools:
+            if tool in tool_descriptions:
+                descriptions.append(tool_descriptions[tool])
+        
+        return "\n".join(descriptions)
     
     def _is_inappropriate_task_generation(self, user_request: str, tasks: List[Task]) -> bool:
         """

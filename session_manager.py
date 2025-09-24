@@ -1,7 +1,11 @@
 """
-Morizo AI - セッション管理システム
+Morizo AI - Smart Pantry AI Agent
+Copyright (c) 2024 Morizo AI Project. All rights reserved.
 
-メモリ内セッション管理 + 3つのクリア方法 + 履歴10件制限
+This software is proprietary and confidential. Unauthorized copying, modification,
+distribution, or use is strictly prohibited without explicit written permission.
+
+For licensing inquiries, contact: [contact@morizo-ai.com]
 """
 
 import uuid
@@ -24,8 +28,6 @@ class SessionContext:
         self.created_at = datetime.now()
         self.last_activity = datetime.now()
         
-        # 在庫状態管理（ID情報を含む）
-        self.current_inventory = []
         
         # 操作履歴（最大10件）
         self.operation_history = []
@@ -43,11 +45,6 @@ class SessionContext:
         # 保留中の確認
         self.pending_confirmation = None
         
-    def update_inventory_state(self, inventory_data: List[Dict]):
-        """現在の在庫状態を更新（ID情報を含む）"""
-        self.current_inventory = inventory_data.copy()
-        self.last_activity = datetime.now()
-        logger.info(f"📦 [セッション] 在庫状態更新: {len(self.current_inventory)}件")
         
     def add_operation(self, operation_type: str, details: Dict[str, Any]):
         """操作履歴を追加（最大10件制限）"""
@@ -92,40 +89,7 @@ class SessionContext:
         self.conversation_context = []
         print(f"💬 ユーザー {self.user_id} の会話コンテキストをクリアしました")
         
-    def get_item_id_by_fifo(self, item_name: str, prefer_latest: bool = False) -> Optional[str]:
-        """FIFO原則でアイテムIDを取得
         
-        Args:
-            item_name: アイテム名
-            prefer_latest: Trueの場合は最新を優先、Falseの場合は最古を優先（FIFO）
-        
-        Returns:
-            アイテムID（見つからない場合はNone）
-        """
-        matching_items = [item for item in self.current_inventory 
-                          if item.get("item_name") == item_name]
-        
-        if not matching_items:
-            logger.info(f"🔍 [FIFO] '{item_name}'が見つかりません")
-            return None
-            
-        # created_atでソート（最古→最新）
-        sorted_items = sorted(matching_items, 
-                             key=lambda x: x.get("created_at", ""), 
-                             reverse=prefer_latest)
-        
-        selected_item = sorted_items[0]
-        item_id = selected_item.get("id")
-        
-        logger.info(f"🔍 [FIFO] '{item_name}'の{'最新' if prefer_latest else '最古'}アイテムを選択: {item_id}")
-        return item_id
-        
-    def get_item_info_by_id(self, item_id: str) -> Optional[Dict]:
-        """IDでアイテム情報を取得"""
-        for item in self.current_inventory:
-            if item.get("id") == item_id:
-                return item
-        return None
         
     def to_dict(self) -> Dict[str, Any]:
         """セッション情報を辞書形式で取得"""
@@ -134,7 +98,6 @@ class SessionContext:
             "user_id": self.user_id,
             "created_at": self.created_at.isoformat(),
             "last_activity": self.last_activity.isoformat(),
-            "current_inventory_count": len(self.current_inventory),
             "operation_history_count": len(self.operation_history),
             "conversation_context_count": len(self.conversation_context),
             "session_duration_minutes": self.get_session_duration().total_seconds() / 60

@@ -1,6 +1,11 @@
 """
-Morizo AI - 統一された真のReActエージェント
-リファクタリング後のメインアプリケーション
+Morizo AI - Smart Pantry AI Agent
+Copyright (c) 2024 Morizo AI Project. All rights reserved.
+
+This software is proprietary and confidential. Unauthorized copying, modification,
+distribution, or use is strictly prohibited without explicit written permission.
+
+For licensing inquiries, contact: [contact@morizo-ai.com]
 """
 
 import os
@@ -39,7 +44,6 @@ try:
     logger.info("✅ [MAIN] models インポート成功")
     from agents.mcp_client import get_available_tools_from_mcp
     logger.info("✅ [MAIN] agents インポート成功")
-    from utils.session_utils import update_session_inventory
     logger.info("✅ [MAIN] utils インポート成功")
     logger.info("✅ [MAIN] 全モジュールインポート成功")
 except Exception as e:

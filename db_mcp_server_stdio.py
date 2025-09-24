@@ -91,6 +91,26 @@ async def inventory_add(
     個別在庫法に従い、1つのアイテムを1件として登録します。
     複数のアイテムを追加する場合は、このツールを複数回呼び出してください。
     
+    🎯 使用場面: 「入れる」「追加」「保管」等のキーワードでユーザーが新たに在庫を作成する場合
+    
+    ⚠️ 重要: item_idは自動採番されるため、パラメータには不要です。
+    データベース側でUUIDが自動生成されます。
+    
+    📋 JSON形式:
+    {{
+        "description": "アイテムを在庫に追加する",
+        "tool": "inventory_add",
+        "parameters": {{
+            "item_name": "アイテム名",
+            "quantity": 数量,
+            "unit": "単位",
+            "storage_location": "保管場所",
+            "expiry_date": "消費期限（オプション）"
+        }},
+        "priority": 1,
+        "dependencies": []
+    }}
+    
     Args:
         token: 認証トークン
         item_name: アイテム名
@@ -176,7 +196,7 @@ async def inventory_get(token: str, item_id: str) -> Dict[str, Any]:
         return {"success": False, "error": f"データベース操作エラー: {str(e)}"}
 
 @mcp.tool()
-async def inventory_update(
+async def inventory_update_by_id(
     token: str,
     item_name: str,
     quantity: Optional[float] = None,
@@ -185,14 +205,31 @@ async def inventory_update(
     expiry_date: Optional[str] = None,
     item_id: Optional[str] = None
 ) -> Dict[str, Any]:
-    """在庫アイテムを1件更新
+    """ID指定での在庫アイテム1件更新
     
     個別在庫法に従い、1つのアイテムを1件として更新します。
     複数のアイテムを更新する場合は、このツールを複数回呼び出してください。
     
-    ⚠️ 重要: item_idパラメータの指定を強く推奨します。
-    item_idを指定しない場合は、item_nameで最新のアイテムを更新しますが、
-    意図しないアイテムが更新される可能性があります。
+    🎯 使用場面: 「変更」「変える」「替える」「かえる」「更新」「クリア」等のキーワードでユーザーが在庫を更新する場合
+    
+    ⚠️ 重要: item_idは**必須です**。必ず在庫情報のitem_idを確認して、設定してください。
+    item_idを指定しない場合は、inventory_update_by_nameを利用して名前でまとめて更新してください。
+    
+    📋 JSON形式:
+    {{
+        "description": "アイテムを更新する",
+        "tool": "inventory_update_by_id",
+        "parameters": {{
+            "item_id": "対象のID（必須）",
+            "item_name": "アイテム名",
+            "quantity": 数量,
+            "unit": "単位",
+            "storage_location": "保管場所",
+            "expiry_date": "消費期限"
+        }},
+        "priority": 1,
+        "dependencies": []
+    }}
     
     Args:
         token: 認証トークン
@@ -201,7 +238,7 @@ async def inventory_update(
         unit: 単位（オプション）
         storage_location: 保管場所（オプション）
         expiry_date: 消費期限（オプション）
-        item_id: アイテムID（推奨、指定しない場合は最新のアイテムを更新）
+        item_id: アイテムID（必須）
     
     Returns:
         更新されたアイテムの情報
@@ -219,13 +256,6 @@ async def inventory_update(
         if not update_data:
             return {"success": False, "error": "更新するデータがありません"}
 
-        # item_idが指定されていない場合は、item_nameで最新のアイテムを取得
-        if not item_id:
-            # 同じitem_nameの最新のアイテムを取得
-            existing_items = db_client.get_client().table("inventory").select("id").eq("item_name", item_name).eq("user_id", user_id).order("created_at", desc=True).limit(1).execute()
-            if not existing_items.data:
-                return {"success": False, "error": f"'{item_name}'が見つかりません"}
-            item_id = existing_items.data[0]["id"]
 
         result = db_client.get_client().table("inventory").update(update_data).eq("id", item_id).eq("user_id", user_id).execute()
         if result.data:
@@ -238,11 +268,13 @@ async def inventory_update(
         return {"success": False, "error": f"データベース操作エラー: {str(e)}"}
 
 @mcp.tool()
-async def inventory_delete(token: str, item_id: str) -> Dict[str, Any]:
-    """在庫アイテムを1件削除
+async def inventory_delete_by_id(token: str, item_id: str) -> Dict[str, Any]:
+    """ID指定での在庫アイテム1件削除
     
     個別在庫法に従い、1つのアイテムを1件として削除します。
     複数のアイテムを削除する場合は、このツールを複数回呼び出してください。
+    
+    🎯 使用場面: 「削除」「消す」「捨てる」「処分」等のキーワードでユーザーが特定のアイテムを削除する場合
     
     ⚠️ 重要: item_idパラメータは必須です。
     削除対象を特定するために、必ずitem_idを指定してください。
@@ -315,6 +347,8 @@ async def inventory_update_by_name(
     指定された名前のアイテムを全て更新します。
     例: "パン"の賞味期限を全てnullにする場合など。
     
+    🎯 使用場面: 「全部」「一括」「全て」等のキーワードで複数のアイテムを同時に更新する場合
+    
     ⚠️ 重要: quantityパラメータは更新する値です。
     更新対象件数ではありません。件数を指定する必要はありません。
     例: パンの賞味期限をクリアする場合、quantityは指定不要。
@@ -363,7 +397,7 @@ async def inventory_update_by_name(
 
 if __name__ == "__main__":
     print("🚀 Database MCP Server (stdio transport) starting...")
-    print("📡 Available tools: inventory_add, inventory_list, inventory_get, inventory_update, inventory_delete, inventory_delete_by_name, inventory_update_by_name")
+    print("📡 Available tools: inventory_add, inventory_list, inventory_get, inventory_update_by_id, inventory_delete_by_id, inventory_delete_by_name, inventory_update_by_name")
     print("🔗 Transport: stdio")
     print("Press Ctrl+C to stop the server")
     

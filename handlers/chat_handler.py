@@ -7,7 +7,6 @@ from fastapi import HTTPException
 from models.requests import ChatRequest, ChatResponse
 from auth.authentication import verify_token
 from session_manager import session_manager
-from utils.session_utils import update_session_inventory
 from utils.llm_utils import get_llm_response
 from agents.mcp_client import get_available_tools_from_mcp
 from true_react_agent import TrueReactAgent
@@ -41,8 +40,6 @@ async def process_with_unified_react(request: ChatRequest, user_session, raw_tok
             available_tools
         )
         
-        # セッションの在庫状態を更新
-        await update_session_inventory(user_session, raw_token)
         
         return ChatResponse(
             response=result,

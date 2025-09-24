@@ -1,6 +1,11 @@
 """
-真のReActエージェント
-行動計画立案→タスク管理→ReActループ→完了報告の完全なAIエージェント
+Morizo AI - Smart Pantry AI Agent
+Copyright (c) 2024 Morizo AI Project. All rights reserved.
+
+This software is proprietary and confidential. Unauthorized copying, modification,
+distribution, or use is strictly prohibited without explicit written permission.
+
+For licensing inquiries, contact: [contact@morizo-ai.com]
 """
 
 import json
@@ -11,6 +16,15 @@ from task_manager import TaskManager
 from openai import OpenAI
 
 logger = logging.getLogger("morizo_ai.true_react")
+
+# 定数定義
+MAX_TOKENS = 200
+
+def estimate_tokens(text: str) -> int:
+    """テキストのトークン数を概算する（日本語は1文字=1トークン、英語は4文字=1トークン）"""
+    japanese_chars = sum(1 for c in text if '\u3040' <= c <= '\u309F' or '\u30A0' <= c <= '\u30FF' or '\u4E00' <= c <= '\u9FAF')
+    other_chars = len(text) - japanese_chars
+    return japanese_chars + (other_chars // 4)
 
 class TrueReactAgent:
     """真のReActエージェントクラス"""
@@ -37,7 +51,7 @@ class TrueReactAgent:
         
         try:
             # Phase 1: 行動計画立案
-            tasks = self.planner.create_plan(user_request, available_tools, user_session.current_inventory)
+            tasks = self.planner.create_plan(user_request, available_tools)
             
             # タスクが空の場合（挨拶など）は直接LLM応答を返す
             if not tasks or len(tasks) == 0:
@@ -132,7 +146,6 @@ class TrueReactAgent:
             "task": task.description,
             "tool": task.tool,
             "parameters": task.parameters,
-            "current_inventory": user_session.current_inventory,
             "operation_history": user_session.get_recent_operations(3)
         }
         
@@ -158,17 +171,23 @@ class TrueReactAgent:
 パラメータ: {json.dumps(task.parameters, ensure_ascii=False, indent=2)}
 
 現在の状況:
-- 在庫状況: {json.dumps(observation['current_inventory'], ensure_ascii=False, indent=2)}
 - 最近の操作: {json.dumps(observation['operation_history'], ensure_ascii=False, indent=2)}
 
 このタスクを実行するために必要な行動を簡潔に説明してください。
 """
         
         try:
+            # トークン数予測
+            estimated_tokens = estimate_tokens(thinking_prompt)
+            overage_rate = (estimated_tokens / MAX_TOKENS) * 100
+            
+            logger.info(f"🧠 [思考] プロンプト全文 (総トークン数: {estimated_tokens}/{MAX_TOKENS}, 超過率: {overage_rate:.1f}%):")
+            logger.info(f"🧠 [思考] {thinking_prompt}")
+            
             response = self.client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[{"role": "user", "content": thinking_prompt}],
-                max_tokens=200,
+                max_tokens=MAX_TOKENS,
                 temperature=0.3
             )
             

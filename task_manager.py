@@ -1,6 +1,11 @@
 """
-タスク管理システム
-実行可能なタスクの管理と状態追跡を行う
+Morizo AI - Smart Pantry AI Agent
+Copyright (c) 2024 Morizo AI Project. All rights reserved.
+
+This software is proprietary and confidential. Unauthorized copying, modification,
+distribution, or use is strictly prohibited without explicit written permission.
+
+For licensing inquiries, contact: [contact@morizo-ai.com]
 """
 
 import logging
