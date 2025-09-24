@@ -63,11 +63,11 @@ async def get_available_tools_from_mcp() -> List[str]:
                     logger.info(f"🔧 [MCP] 利用可能なツール: {available_tools}")
                 else:
                     logger.warning("⚠️ [MCP] ツールリストの取得に失敗、フォールバックを使用")
-                    available_tools = ["inventory_add", "inventory_list", "inventory_get", "inventory_update", "inventory_delete", "llm_chat"]
+                    available_tools = ["inventory_add", "inventory_list", "inventory_get", "inventory_update", "inventory_delete"]
         
         return available_tools
         
     except Exception as e:
         logger.error(f"❌ [MCP] ツール一覧取得エラー: {str(e)}")
         # フォールバック
-        return ["inventory_add", "inventory_list", "inventory_get", "inventory_update", "inventory_delete", "llm_chat"]
+        return ["inventory_add", "inventory_list", "inventory_get", "inventory_update", "inventory_delete"]

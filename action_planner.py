@@ -69,29 +69,45 @@ class ActionPlanner:
 """
         
         planning_prompt = f"""
-要求: "{user_request}"
-ツール: {', '.join(available_tools)}
+ユーザー要求を分析し、適切なタスクに分解してください。
+
+ユーザー要求: "{user_request}"
+
+利用可能なツール: {', '.join(available_tools)}
 {inventory_summary}
 
-ルール:
-- 挨拶→空配列
-- 在庫確認→inventory_list
-- 追加→inventory_add
-- 1件更新/削除→inventory_update/inventory_delete (item_id必須)
-- 一括更新/削除→inventory_update_by_name/inventory_delete_by_name (item_nameのみ)
+重要な判断基準:
+1. **挨拶や一般的な会話の場合**: タスクは生成せず、空の配列を返す
+   - 例: "こんにちは", "おはよう", "こんばんは", "お疲れ様", "ありがとう"
+   - 例: "調子はどう？", "元気？", "今日はいい天気ですね"
 
-JSON:
+2. **在庫管理に関連する要求の場合**: 適切なツールを選択
+   - 在庫確認: inventory_list
+   - 在庫追加: inventory_add
+   - 在庫更新: inventory_update (item_id必須)
+   - 在庫削除: inventory_delete (item_id必須)
+   - 一括更新: inventory_update_by_name (item_nameのみ)
+   - 一括削除: inventory_delete_by_name (item_nameのみ)
+
+3. **タスク生成のルール**:
+   - 削除・更新は必ずitem_idを指定
+   - 在庫状況から適切なIDを選択
+   - 異なるアイテムは個別タスクに分解
+   - 同一アイテムでも個別IDで処理
+
+**重要**: 必ず以下のJSON形式で回答してください。他の形式は使用禁止です。
+
 {{
     "tasks": [
         {{
-            "description": "説明",
-            "tool": "ツール名",
+            "description": "タスクの説明",
+            "tool": "使用するツール名",
             "parameters": {{
-                "item_id": "ID",
-                "item_name": "名前",
+                "item_id": "対象のID",
+                "item_name": "アイテム名",
                 "quantity": 数量,
                 "unit": "単位",
-                "storage_location": "場所"
+                "storage_location": "保管場所"
             }},
             "priority": 1,
             "dependencies": []
@@ -154,35 +170,12 @@ JSON:
             return tasks
             
         except json.JSONDecodeError as e:
-            logger.error(f"❌ [計画立案] JSON解析エラー: {str(e)}")
-            logger.error(f"❌ [計画立案] 不完全なJSON: {result[:200]}...")
+            logger.info(f"🧠 [計画立案] LLMがシンプルなメッセージと判断: {str(e)}")
+            logger.info(f"🧠 [計画立案] LLM応答: {result[:100]}...")
             
-            # JSON解析エラーの場合、適切なツールを推測してフォールバック
-            if "在庫" in user_request or "教えて" in user_request:
-                # 在庫確認の場合はinventory_listを使用
-                fallback_task = Task(
-                    id=f"task_{self.task_counter}",
-                    description="在庫一覧を取得する",
-                    tool="inventory_list",
-                    parameters={},
-                    priority=1
-                )
-            elif "削除" in user_request:
-                # 削除の場合はエラーとして処理
-                logger.error("❌ [計画立案] 削除要求でJSON解析エラー - 適切なタスクを生成できません")
-                return []
-            else:
-                # その他の場合はllm_chatを使用
-                fallback_task = Task(
-                    id=f"task_{self.task_counter}",
-                    description=f"ユーザー要求の処理: {user_request}",
-                    tool="llm_chat",
-                    parameters={"message": user_request},
-                    priority=1
-                )
-            
-            self.task_counter += 1
-            return [fallback_task]
+            # JSON解析エラー = LLMがシンプルなメッセージと判断
+            # 空のタスク配列を返す（TrueReactAgentで_generate_simple_responseに流れる）
+            return []
             
         except Exception as e:
             logger.error(f"❌ [計画立案] エラー: {str(e)}")
