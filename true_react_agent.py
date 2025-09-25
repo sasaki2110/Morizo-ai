@@ -10,6 +10,7 @@ For licensing inquiries, contact: [contact@morizo-ai.com]
 
 import json
 import logging
+import os
 from typing import List, Dict, Any, Optional
 from action_planner import ActionPlanner, Task
 from task_manager import TaskManager
@@ -185,7 +186,7 @@ class TrueReactAgent:
             logger.info(f"🧠 [思考] {thinking_prompt}")
             
             response = self.client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
                 messages=[{"role": "user", "content": thinking_prompt}],
                 max_tokens=MAX_TOKENS,
                 temperature=0.3
@@ -364,7 +365,7 @@ class TrueReactAgent:
             logger.info(f"   {prompt}")
             
             response = self.client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=800,
                 temperature=0.7
@@ -435,7 +436,7 @@ class TrueReactAgent:
 """
             
             response = self.client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=200,
                 temperature=0.7

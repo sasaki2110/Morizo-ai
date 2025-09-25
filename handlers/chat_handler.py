@@ -7,7 +7,6 @@ from fastapi import HTTPException
 from models.requests import ChatRequest, ChatResponse
 from auth.authentication import verify_token
 from session_manager import session_manager
-from utils.llm_utils import get_llm_response
 from agents.mcp_client import get_available_tools_from_mcp
 from true_react_agent import TrueReactAgent
 from openai import OpenAI
@@ -44,7 +43,7 @@ async def process_with_unified_react(request: ChatRequest, user_session, raw_tok
         return ChatResponse(
             response=result,
             success=True,
-            model_used="gpt-4o-mini",
+            model_used=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
             user_id=user_session.user_id
         )
         
@@ -56,7 +55,7 @@ async def process_with_unified_react(request: ChatRequest, user_session, raw_tok
         return ChatResponse(
             response=f"申し訳ありません。処理中にエラーが発生しました: {str(e)}",
             success=False,
-            model_used="gpt-4o-mini",
+            model_used=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
             user_id=user_session.user_id
         )
 

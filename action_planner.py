@@ -10,6 +10,7 @@ For licensing inquiries, contact: [contact@morizo-ai.com]
 
 import json
 import logging
+import os
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 from openai import OpenAI
@@ -121,7 +122,7 @@ class ActionPlanner:
             logger.info(f"🧠 [計画立案] {planning_prompt}")
             
             response = self.client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
                 messages=[{"role": "user", "content": planning_prompt}],
                 max_tokens=MAX_TOKENS,
                 temperature=0.3
