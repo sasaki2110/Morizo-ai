@@ -41,20 +41,53 @@ MENU_CONSTRAINTS = {
 4. （統合提案機能は削除）
 ```
 
-## 🛠️ MCPツール設計
+## 🔄 **設計の進化（壁打ち結果）**
 
-### **1. generate_menu_plan（献立構成生成）**
+### **Phase 1完了後の設計見直し**
 
-#### **仕様**
+#### **問題点の発見**
+1. **ループバックの複雑さ**: タスクの途中でプランニングに戻る機能がない
+2. **固定順序の繰り返し**: ベクトル検索は同じ順序で結果を返す
+3. **ReActループの制限**: 現在のReActループは動的なプラン修正に対応していない
+
+#### **RAGの役割の明確化**
+- **本来の目的**: 美味しいレシピの厳選済みデータ（6,233件）を活用
+- **データの制限**: タイトルと材料のみ、調理手順は含まれていない
+- **実際の役割**: LLMの推論補佐、レシピ検索には使えない
+- **現実的な制約**: 実際のレシピはWeb検索に頼るしかない
+
+#### **修正された処理フロー**
+```
+サイクル1: inventory_list 実行
+サイクル2: generate_menu_plan_with_history 実行
+  ├─ 在庫食材から献立生成 ← LLMがタイトルを生成
+  ├─ 過去履歴をチェック ← データベースで履歴確認
+  ├─ 重複があれば代替案生成 ← LLMが代替タイトルを生成
+  └─ 最終的な献立を決定 ← タイトルのみ決定
+サイクル3: search_recipe_for_menu 実行 (主菜) ← Web検索のみ
+サイクル4: search_recipe_for_menu 実行 (副菜) ← Web検索のみ
+サイクル5: search_recipe_for_menu 実行 (味噌汁) ← Web検索のみ
+```
+
+#### **責任分離の明確化**
+- **LLM**: 創造的な献立タイトル生成
+- **RAG**: LLMの推論補佐（類似レシピの検索）
+- **Web**: 具体的なレシピ情報の取得（調理手順）
+
+## 🛠️ MCPツール設計（修正版）
+
+### **1. generate_menu_plan_with_history（献立構成生成）**
+
+#### **仕様（修正版）**
 ```python
 @mcp.tool()
-async def generate_menu_plan(
+async def generate_menu_plan_with_history(
     inventory_items: List[str],
     user_id: str,
     menu_type: str = "和食"
 ) -> Dict[str, Any]:
     """
-    在庫食材から献立構成を生成（シンプル版）
+    在庫食材から献立構成を生成（過去履歴を考慮）
     
     Args:
         inventory_items: 在庫食材リスト
@@ -64,8 +97,8 @@ async def generate_menu_plan(
     Returns:
         {
             "main_dish": {
-                "title": "鶏もも肉の照り焼き",
-                "ingredients": ["鶏もも肉", "醤油", "みりん", "酒"]
+                "title": "牛乳と卵のフレンチトースト",
+                "ingredients": ["牛乳", "卵", "パン", "バター"]
             },
             "side_dish": {
                 "title": "ほうれん草の胡麻和え",
@@ -76,11 +109,39 @@ async def generate_menu_plan(
                 "ingredients": ["豆腐", "わかめ", "味噌", "だし"]
             },
             "ingredient_usage": {
-                "used": ["鶏もも肉", "醤油", "みりん", "酒", "ほうれん草", "胡麻", "豆腐", "わかめ", "味噌", "だし"],
-                "remaining": ["牛乳", "卵", "パン"]
-            }
+                "used": ["牛乳", "卵", "パン", "バター", "ほうれん草", "胡麻", "豆腐", "わかめ", "味噌", "だし"],
+                "remaining": []
+            },
+            "excluded_recipes": ["フレンチトースト", "オムレツ"],
+            "fallback_used": true
         }
     """
+```
+
+#### **処理フロー**
+```python
+async def generate_menu_plan_with_history(inventory_items, user_id, menu_type):
+    # 1. LLMが献立候補を生成
+    menu_candidates = await llm_generate_menu_candidates(inventory_items)
+    
+    # 2. RAGで類似レシピを検索（補佐）
+    rag_suggestions = await rag_search_similar_recipes(menu_candidates)
+    
+    # 3. LLMが最終的な献立を決定
+    final_menu = await llm_decide_final_menu(menu_candidates, rag_suggestions)
+    
+    # 4. 過去履歴をチェック
+    recent_recipes = await get_recent_recipes(user_id, 14)
+    
+    # 5. 重複があれば代替案生成
+    if has_overlap(final_menu, recent_recipes):
+        alternative_menu = await llm_generate_alternative_menu(
+            inventory_items, 
+            exclude_recipes=recent_recipes
+        )
+        return alternative_menu
+    
+    return final_menu
 ```
 
 ### **2. check_cooking_history（過去履歴チェック）**
@@ -175,7 +236,7 @@ RECIPE_GENERATION_PROMPT = """
 
 ### **3. search_recipe_for_menu（献立用レシピ検索）**
 
-#### **仕様**
+#### **仕様（修正版）**
 ```python
 @mcp.tool()
 async def search_recipe_for_menu(
@@ -185,7 +246,7 @@ async def search_recipe_for_menu(
     excluded_ingredients: List[str] = None
 ) -> Dict[str, Any]:
     """
-    献立用のレシピ検索（食材の重複回避）
+    献立用のレシピ検索（Web検索のみ）
     
     Args:
         dish_type: 料理の種類
@@ -196,18 +257,34 @@ async def search_recipe_for_menu(
     Returns:
         {
             "recipe": {
-                "title": "豚肉の生姜焼き",
-                "ingredients": ["豚肉", "生姜", "醤油", "酒"],
+                "title": "牛乳と卵のフレンチトースト",
+                "ingredients": ["牛乳", "卵", "パン", "バター"],
+                "instructions": "1. 牛乳と卵を混ぜる...",
                 "source": "cookpad",
                 "url": "https://cookpad.com/recipe/789012"
             },
             "ingredient_compatibility": {
-                "available": ["豚肉", "生姜", "醤油", "酒"],
+                "available": ["牛乳", "卵", "パン", "バター"],
                 "missing": [],
-                "excluded": ["牛乳", "卵"]  # 他の料理で使用済み
+                "excluded": ["ほうれん草", "豆腐"]  # 他の料理で使用済み
             }
         }
     """
+```
+
+#### **処理フロー（修正版）**
+```python
+async def search_recipe_for_menu(dish_type, title, available_ingredients, excluded_ingredients):
+    # 1. Web検索でレシピを検索
+    web_results = await web_search_recipe(title)
+    
+    # 2. 食材の互換性をチェック
+    compatible_recipes = filter_by_ingredients(web_results, available_ingredients, excluded_ingredients)
+    
+    # 3. 最適なレシピを選択
+    best_recipe = select_best_recipe(compatible_recipes, dish_type)
+    
+    return best_recipe
 ```
 
 #### **内部実装戦略**
@@ -421,7 +498,7 @@ MATCHING_SCORE_CALCULATION = {
 2. **代替案生成**: 複数の献立パターン
 3. **買い物提案**: 不足食材の提案
 
-## 🎯 本体ReActループでの使用例
+## 🎯 本体ReActループでの使用例（修正版）
 
 ### **ユーザーリクエスト**
 ```
@@ -439,36 +516,51 @@ MATCHING_SCORE_CALCULATION = {
       "priority": 1
     },
     {
-      "description": "過去の調理履歴をチェック",
-      "tool": "check_cooking_history",
-      "parameters": {
-        "user_id": "{{user_id}}",
-        "recipe_titles": "{{all_possible_recipes}}",
-        "exclusion_days": 14
-      },
-      "priority": 2
-    },
-    {
-      "description": "在庫食材から献立構成を生成",
-      "tool": "generate_menu_plan",
+      "description": "在庫食材から献立構成を生成（過去履歴を考慮）",
+      "tool": "generate_menu_plan_with_history",
       "parameters": {
         "inventory_items": "{{task1_result}}",
         "user_id": "{{user_id}}",
         "menu_type": "和食"
       },
-      "priority": 3,
-      "dependencies": ["task1", "task2"]
+      "priority": 2,
+      "dependencies": ["task1"]
     },
     {
-      "description": "各料理のレシピを検索",
+      "description": "主菜のレシピを検索",
       "tool": "search_recipe_for_menu",
       "parameters": {
         "dish_type": "主菜",
-        "title": "{{task3_result.main_dish.title}}",
-        "available_ingredients": "{{task3_result.main_dish.ingredients}}"
+        "title": "{{task2_result.main_dish.title}}",
+        "available_ingredients": "{{task2_result.main_dish.ingredients}}",
+        "excluded_ingredients": "{{task2_result.side_dish.ingredients + task2_result.soup.ingredients}}"
+      },
+      "priority": 3,
+      "dependencies": ["task2"]
+    },
+    {
+      "description": "副菜のレシピを検索",
+      "tool": "search_recipe_for_menu",
+      "parameters": {
+        "dish_type": "副菜",
+        "title": "{{task2_result.side_dish.title}}",
+        "available_ingredients": "{{task2_result.side_dish.ingredients}}",
+        "excluded_ingredients": "{{task2_result.main_dish.ingredients + task2_result.soup.ingredients}}"
       },
       "priority": 4,
-      "dependencies": ["task3"]
+      "dependencies": ["task2"]
+    },
+    {
+      "description": "味噌汁のレシピを検索",
+      "tool": "search_recipe_for_menu",
+      "parameters": {
+        "dish_type": "味噌汁",
+        "title": "{{task2_result.soup.title}}",
+        "available_ingredients": "{{task2_result.soup.ingredients}}",
+        "excluded_ingredients": "{{task2_result.main_dish.ingredients + task2_result.side_dish.ingredients}}"
+      },
+      "priority": 5,
+      "dependencies": ["task2"]
     }
   ]
 }
@@ -477,21 +569,26 @@ MATCHING_SCORE_CALCULATION = {
 ### **TaskManager（タスク実行）**
 ```
 サイクル1: inventory_list 実行
-サイクル2: check_cooking_history 実行
-サイクル3: generate_menu_plan 実行
-サイクル4: search_recipe_for_menu 実行
+サイクル2: generate_menu_plan_with_history 実行
+  ├─ 在庫食材から献立生成 ← LLMがタイトルを生成
+  ├─ 過去履歴をチェック ← データベースで履歴確認
+  ├─ 重複があれば代替案生成 ← LLMが代替タイトルを生成
+  └─ 最終的な献立を決定 ← タイトルのみ決定
+サイクル3: search_recipe_for_menu 実行 (主菜) ← Web検索のみ
+サイクル4: search_recipe_for_menu 実行 (副菜) ← Web検索のみ
+サイクル5: search_recipe_for_menu 実行 (味噌汁) ← Web検索のみ
 ```
 
 ### **最終応答生成**
 ```
 "今日の献立をご提案します！（過去14日間の重複を回避）
 
-【主菜】豚肉の生姜焼き
+【主菜】牛乳と卵のフレンチトースト
 【副菜】ほうれん草の胡麻和え  
 【味噌汁】豆腐とわかめの味噌汁
 
-使用食材: 豚肉、生姜、醤油、酒、ほうれん草、胡麻、豆腐、わかめ、味噌、だし
-残り食材: 牛乳、卵、パン
+使用食材: 牛乳、卵、パン、バター、ほうれん草、胡麻、豆腐、わかめ、味噌、だし
+残り食材: なし
 
 ※過去14日間で調理したレシピは除外しています"
 ```

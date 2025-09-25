@@ -76,6 +76,20 @@ class InventoryUpdate(BaseModel):
     storage_location: Optional[str] = None
     expiry_date: Optional[str] = None
 
+class RecipeItem(BaseModel):
+    title: str
+    source: str = "web"  # 'web', 'rag', 'manual'
+    url: Optional[str] = None
+    rating: Optional[int] = None  # 1-5段階
+    notes: Optional[str] = None
+
+class RecipeUpdate(BaseModel):
+    title: Optional[str] = None
+    source: Optional[str] = None
+    url: Optional[str] = None
+    rating: Optional[int] = None
+    notes: Optional[str] = None
+
 # MCPツール定義（アノテーション方式）
 @mcp.tool()
 async def inventory_add(
@@ -619,9 +633,290 @@ async def inventory_delete_by_name_latest(
         return {"success": False, "error": f"データベース操作エラー: {str(e)}"}
 
 
+# ===== RECIPES CRUD OPERATIONS =====
+
+@mcp.tool()
+async def recipes_add(
+    token: str,
+    title: str,
+    source: str = "web",
+    url: Optional[str] = None,
+    rating: Optional[int] = None,
+    notes: Optional[str] = None
+) -> Dict[str, Any]:
+    """レシピ履歴に新しいレシピを追加
+    
+    🎯 使用場面: ユーザーが実際に作ったレシピを履歴として記録する場合
+    
+    📋 パラメータ:
+    - title: レシピタイトル（必須）
+    - source: レシピの出典（'web', 'rag', 'manual'）
+    - url: レシピのURL（Web検索で見つけた場合）
+    - rating: 評価（1-5段階）
+    - notes: メモ・感想
+    
+    📋 JSON形式:
+    {
+        "success": true,
+        "data": {
+            "id": "uuid",
+            "title": "牛乳と卵のフレンチトースト",
+            "source": "web",
+            "url": "https://cookpad.com/recipe/123456",
+            "rating": 4,
+            "notes": "美味しかった！",
+            "cooked_at": "2024-09-25T10:30:00Z",
+            "created_at": "2024-09-25T10:30:00Z"
+        }
+    }
+    """
+    try:
+        # 認証
+        user_id = db_client.authenticate(token)
+        
+        # バリデーション
+        if rating is not None and (rating < 1 or rating > 5):
+            return {"success": False, "error": "評価は1-5段階で入力してください"}
+        
+        # レシピデータの準備
+        recipe_data = {
+            "user_id": user_id,
+            "title": title,
+            "source": source,
+            "url": url,
+            "rating": rating,
+            "notes": notes
+        }
+        
+        # データベースに挿入
+        supabase = db_client.get_client()
+        result = supabase.table("recipes").insert(recipe_data).execute()
+        
+        if result.data:
+            return {
+                "success": True,
+                "data": result.data[0]
+            }
+        else:
+            return {"success": False, "error": "レシピの追加に失敗しました"}
+            
+    except Exception as e:
+        return {"success": False, "error": f"データベース操作エラー: {str(e)}"}
+
+
+@mcp.tool()
+async def recipes_list(
+    token: str,
+    limit: int = 50
+) -> Dict[str, Any]:
+    """レシピ履歴一覧を取得（created_at昇順）
+    
+    🎯 使用場面: 過去の調理履歴を確認する場合
+    
+    📋 パラメータ:
+    - limit: 取得件数（デフォルト50件）
+    
+    📋 JSON形式:
+    {
+        "success": true,
+        "data": [
+            {
+                "id": "uuid",
+                "title": "牛乳と卵のフレンチトースト",
+                "source": "web",
+                "url": "https://cookpad.com/recipe/123456",
+                "rating": 4,
+                "notes": "美味しかった！",
+                "cooked_at": "2024-09-25T10:30:00Z",
+                "created_at": "2024-09-25T10:30:00Z"
+            }
+        ],
+        "count": 1
+    }
+    """
+    try:
+        # 認証
+        user_id = db_client.authenticate(token)
+        
+        # レシピ一覧を取得（created_at昇順）
+        supabase = db_client.get_client()
+        result = supabase.table("recipes")\
+            .select("*")\
+            .eq("user_id", user_id)\
+            .order("created_at", desc=False)\
+            .limit(limit)\
+            .execute()
+        
+        return {
+            "success": True,
+            "data": result.data,
+            "count": len(result.data)
+        }
+            
+    except Exception as e:
+        return {"success": False, "error": f"データベース操作エラー: {str(e)}"}
+
+
+@mcp.tool()
+async def recipes_update_latest(
+    token: str,
+    title: Optional[str] = None,
+    source: Optional[str] = None,
+    url: Optional[str] = None,
+    rating: Optional[int] = None,
+    notes: Optional[str] = None
+) -> Dict[str, Any]:
+    """最新のレシピを更新（メンテナンス用）
+    
+    🎯 使用場面: 最新に追加したレシピの情報を修正する場合
+    
+    📋 パラメータ:
+    - title: レシピタイトル
+    - source: レシピの出典
+    - url: レシピのURL
+    - rating: 評価（1-5段階）
+    - notes: メモ・感想
+    
+    📋 JSON形式:
+    {
+        "success": true,
+        "data": {
+            "id": "uuid",
+            "title": "更新されたレシピタイトル",
+            "source": "web",
+            "url": "https://cookpad.com/recipe/123456",
+            "rating": 5,
+            "notes": "更新されたメモ",
+            "cooked_at": "2024-09-25T10:30:00Z",
+            "created_at": "2024-09-25T10:30:00Z",
+            "updated_at": "2024-09-25T11:00:00Z"
+        }
+    }
+    """
+    try:
+        # 認証
+        user_id = db_client.authenticate(token)
+        
+        # バリデーション
+        if rating is not None and (rating < 1 or rating > 5):
+            return {"success": False, "error": "評価は1-5段階で入力してください"}
+        
+        # 更新データの準備
+        update_data = {}
+        if title is not None:
+            update_data["title"] = title
+        if source is not None:
+            update_data["source"] = source
+        if url is not None:
+            update_data["url"] = url
+        if rating is not None:
+            update_data["rating"] = rating
+        if notes is not None:
+            update_data["notes"] = notes
+        
+        if not update_data:
+            return {"success": False, "error": "更新する項目が指定されていません"}
+        
+        # 最新のレシピを取得して更新
+        supabase = db_client.get_client()
+        
+        # まず最新のレシピを取得
+        latest_result = supabase.table("recipes")\
+            .select("id")\
+            .eq("user_id", user_id)\
+            .order("created_at", desc=True)\
+            .limit(1)\
+            .execute()
+        
+        if not latest_result.data:
+            return {"success": False, "error": "更新対象のレシピが見つかりません"}
+        
+        latest_id = latest_result.data[0]["id"]
+        
+        # 最新のレシピを更新
+        result = supabase.table("recipes")\
+            .update(update_data)\
+            .eq("id", latest_id)\
+            .eq("user_id", user_id)\
+            .execute()
+        
+        if result.data:
+            return {
+                "success": True,
+                "data": result.data[0]
+            }
+        else:
+            return {"success": False, "error": "レシピの更新に失敗しました"}
+            
+    except Exception as e:
+        return {"success": False, "error": f"データベース操作エラー: {str(e)}"}
+
+
+@mcp.tool()
+async def recipes_delete_latest(
+    token: str
+) -> Dict[str, Any]:
+    """最新のレシピを削除（メンテナンス用）
+    
+    🎯 使用場面: 最新に追加したレシピを削除する場合
+    
+    📋 JSON形式:
+    {
+        "success": true,
+        "data": {
+            "id": "uuid",
+            "title": "削除されたレシピタイトル",
+            "deleted_at": "2024-09-25T11:00:00Z"
+        }
+    }
+    """
+    try:
+        # 認証
+        user_id = db_client.authenticate(token)
+        
+        # 最新のレシピを取得して削除
+        supabase = db_client.get_client()
+        
+        # まず最新のレシピを取得
+        latest_result = supabase.table("recipes")\
+            .select("id, title")\
+            .eq("user_id", user_id)\
+            .order("created_at", desc=True)\
+            .limit(1)\
+            .execute()
+        
+        if not latest_result.data:
+            return {"success": False, "error": "削除対象のレシピが見つかりません"}
+        
+        latest_recipe = latest_result.data[0]
+        latest_id = latest_recipe["id"]
+        
+        # 最新のレシピを削除
+        result = supabase.table("recipes")\
+            .delete()\
+            .eq("id", latest_id)\
+            .eq("user_id", user_id)\
+            .execute()
+        
+        if result.data:
+            return {
+                "success": True,
+                "data": {
+                    "id": latest_id,
+                    "title": latest_recipe["title"],
+                    "deleted_at": "2024-09-25T11:00:00Z"
+                }
+            }
+        else:
+            return {"success": False, "error": "レシピの削除に失敗しました"}
+            
+    except Exception as e:
+        return {"success": False, "error": f"データベース操作エラー: {str(e)}"}
+
+
 if __name__ == "__main__":
     print("🚀 Database MCP Server (stdio transport) starting...")
-    print("📡 Available tools: inventory_add, inventory_list, inventory_get, inventory_update_by_id, inventory_delete_by_id, inventory_delete_by_name, inventory_update_by_name, inventory_update_by_name_oldest, inventory_update_by_name_latest, inventory_delete_by_name_oldest, inventory_delete_by_name_latest")
+    print("📡 Available tools: inventory_add, inventory_list, inventory_get, inventory_update_by_id, inventory_delete_by_id, inventory_delete_by_name, inventory_update_by_name, inventory_update_by_name_oldest, inventory_update_by_name_latest, inventory_delete_by_name_oldest, inventory_delete_by_name_latest, recipes_add, recipes_list, recipes_update_latest, recipes_delete_latest")
     print("🔗 Transport: stdio")
     print("Press Ctrl+C to stop the server")
     

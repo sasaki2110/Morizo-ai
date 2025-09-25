@@ -228,5 +228,10 @@ cache/
 # Me2You
 me2you
 
+# レシピ関連データ
+recipe_vector_db/
+*.sqlite3
+embeddings/
+
 # アプリログ
 morizo_ai.*
