@@ -50,7 +50,9 @@ MENU_CONSTRAINTS = {
 2. **固定順序の繰り返し**: ベクトル検索は同じ順序で結果を返す
 3. **ReActループの制限**: 現在のReActループは動的なプラン修正に対応していない
 
-#### **RAGの役割の明確化**
+#### **RAGの役割の明確化（壁打ちで整理）**
+- **❌ 誤解**: RAGで直接レシピを検索する
+- **✅ 正解**: RAGでLLMのレシピ提案を**補佐**する
 - **本来の目的**: 美味しいレシピの厳選済みデータ（6,233件）を活用
 - **データの制限**: タイトルと材料のみ、調理手順は含まれていない
 - **実際の役割**: LLMの推論補佐、レシピ検索には使えない
@@ -71,7 +73,7 @@ MENU_CONSTRAINTS = {
 
 #### **責任分離の明確化**
 - **LLM**: 創造的な献立タイトル生成
-- **RAG**: LLMの推論補佐（類似レシピの検索）
+- **RAG**: LLMの推論補佐（類似レシピの検索・食材組み合わせ提案・文化的適切性向上）
 - **Web**: 具体的なレシピ情報の取得（調理手順）
 
 ## 🛠️ MCPツール設計（修正版）
@@ -124,10 +126,10 @@ async def generate_menu_plan_with_history(inventory_items, user_id, menu_type):
     # 1. LLMが献立候補を生成
     menu_candidates = await llm_generate_menu_candidates(inventory_items)
     
-    # 2. RAGで類似レシピを検索（補佐）
+    # 2. RAGで類似レシピを検索（LLM補佐）
     rag_suggestions = await rag_search_similar_recipes(menu_candidates)
     
-    # 3. LLMが最終的な献立を決定
+    # 3. LLMがRAGの結果を参考に最終的な献立を決定
     final_menu = await llm_decide_final_menu(menu_candidates, rag_suggestions)
     
     # 4. 過去履歴をチェック
@@ -348,7 +350,12 @@ SEARCH_QUERY_OPTIMIZATION = {
 }
 ```
 
-## 🗄️ RAG検索の実装
+## 🗄️ RAG検索の実装（LLM補佐機能）
+
+### **RAGの補佐機能**
+- **レシピタイトルの精度向上**: 既存の美味しいレシピを参考
+- **食材の組み合わせ提案**: 実際に使われている組み合わせを学習
+- **文化的適切性**: 日本の食文化に合った提案
 
 ### **既存データの活用**
 - **データソース**: `me2you/recipe_data.jsonl` (6,234件のレシピ)
@@ -754,9 +761,36 @@ class RecipeVectorSearch:
 コスト削減: 99.98%の削減！
 ```
 
+## 🔧 疎結合設計の実現
+
+### **モジュール独立性の実現**
+- **recipe_mcp**: 献立生成のみに専念
+- **db_mcp**: データベース操作のみに専念
+- **呼び出し元**: 過去レシピ取得の責任を負う
+
+### **責任分離の具体例**
+```python
+# 疎結合設計前（密結合）
+async def generate_menu_plan_with_history(token, inventory_items):
+    user_id = db_client.authenticate(token)  # ← DB操作
+    excluded_recipes = await get_recent_recipes(user_id)  # ← DB操作
+    menu = await generate_menu_with_llm(inventory_items, excluded_recipes)
+
+# 疎結合設計後（疎結合）
+async def generate_menu_plan_with_history(inventory_items, excluded_recipes):
+    menu = await generate_menu_with_llm(inventory_items, excluded_recipes)
+    # 過去レシピは外部から受け取る
+```
+
+### **疎結合の利点**
+- **再利用性**: 他のMCPからも利用可能
+- **テスト容易性**: モックデータでテスト可能
+- **保守性**: 各モジュールが独立して変更可能
+- **拡張性**: 新しい機能を独立して追加可能
+
 ---
 
 **作成日**: 2025年1月27日  
 **作成者**: AIエージェント協働チーム  
-**ステータス**: 設計完了（実装未着手）  
-**バージョン**: 2.0（献立提案機能対応）
+**ステータス**: Phase 2完了（疎結合設計実装済み）  
+**バージョン**: 2.1（RAG補佐機能・疎結合設計対応）
