@@ -48,7 +48,7 @@ class ActionPlanner:
         self.client = openai_client
         self.task_counter = 0
     
-    def create_plan(self, user_request: str, available_tools: List[str]) -> List[Task]:
+    async def create_plan(self, user_request: str, available_tools: List[str]) -> List[Task]:
         """
         ユーザーの要求を分析し、実行可能なタスクに分解する
         
@@ -61,8 +61,8 @@ class ActionPlanner:
         """
         logger.info(f"🧠 [計画立案] ユーザー要求を分析: {user_request}")
         
-        # MCPツールの説明を取得
-        tools_description = self._get_tools_description(available_tools)
+        # MCPツールの説明を動的に取得（関連ツールのみ）
+        tools_description = await self._get_tools_description(available_tools, user_request)
         
         # LLMにタスク分解を依頼
         
@@ -80,13 +80,14 @@ class ActionPlanner:
    - 例: "こんにちは", "おはよう", "こんばんは", "お疲れ様", "ありがとう"
    - 例: "調子はどう？", "元気？", "今日はいい天気ですね"
 
-2. **在庫管理に関連する要求の場合**: 適切なツールを選択
-   - 在庫確認: inventory_list
-   - 在庫追加: inventory_add
-   - 在庫更新: inventory_update_by_id (item_id必須)
-   - 在庫削除: inventory_delete_by_id (item_id必須)
-   - 一括更新: inventory_update_by_name (item_nameのみ)
-   - 一括削除: inventory_delete_by_name (item_nameのみ)
+2. **在庫管理に関連するユーザー指示の確認**: 適切なツールを選択
+   - **ユーザー指定（最新）**: ユーザー要求に「最新の」「新しい方の」「最近買った」キーワードがあるか確認
+   - 最新を指示するキーワードがあれば、最新アイテムを更新/削除。
+
+   - **ユーザー指定（全て）**: ユーザー要求に「全ての」「全部の」キーワードがあるか確認
+   - 全てを指示するキーワードがあれば、全アイテムを更新/削除。
+
+   - **ユーザー指定なし**: ユーザー要求に最新や全ての指定がない場合は最古アイテムを更新/削除
 
 3. **タスク生成のルール**:
    - 削除・更新は必ずitem_idを指定
@@ -194,9 +195,110 @@ class ActionPlanner:
             self.task_counter += 1
             return [fallback_task]
     
-    def _get_tools_description(self, available_tools: List[str]) -> str:
-        """MCPツールの説明を取得"""
-        # 簡易的なツール説明（実際のMCPツールから動的に取得する場合は、MCPクライアントを使用）
+    async def _get_tools_description(self, available_tools: List[str], user_request: str = "") -> str:
+        """MCPツールの説明を動的に取得（関連ツールのみ）"""
+        try:
+            # ユーザー要求に基づいて関連ツールをフィルタリング
+            relevant_tools = self._filter_relevant_tools(available_tools, user_request)
+            logger.info(f"🔧 [計画立案] 関連ツール: {len(relevant_tools)}/{len(available_tools)}個")
+            
+            # FastMCPクライアントから動的にツール詳細を取得
+            from agents.mcp_client import MCPClient
+            mcp_client = MCPClient()
+            tool_details = await mcp_client.get_tool_details()
+            
+            if not tool_details:
+                logger.warning("⚠️ [計画立案] ツール詳細取得失敗、フォールバック使用")
+                return self._get_fallback_tools_description(relevant_tools)
+            
+            # 動的に取得したツール説明をフォーマット（パラメータ情報含む）
+            descriptions = []
+            for tool_name in relevant_tools:
+                if tool_name in tool_details:
+                    tool_info = tool_details[tool_name]
+                    # 説明文を短縮（100文字以内、トークン節約）
+                    full_description = tool_info["description"]
+                    # 最初の文のみ抽出（。で区切る）
+                    first_sentence = full_description.split('。')[0] if '。' in full_description else full_description
+                    # 100文字以内に制限（FIFO関連情報を含めるため拡張）
+                    short_description = first_sentence[:100] + "..." if len(first_sentence) > 100 else first_sentence
+                    
+                    # パラメータ情報を追加
+                    param_info = self._extract_parameter_info(tool_info.get("input_schema", {}))
+                    if param_info:
+                        descriptions.append(f"{tool_name}: {short_description}\n  パラメータ: {param_info}")
+                    else:
+                        descriptions.append(f"{tool_name}: {short_description}")
+                else:
+                    logger.warning(f"⚠️ [計画立案] ツール {tool_name} の詳細情報が見つかりません")
+            
+            return "\n".join(descriptions)
+            
+        except Exception as e:
+            logger.error(f"❌ [計画立案] 動的ツール説明取得エラー: {str(e)}")
+            return self._get_fallback_tools_description(available_tools)
+    
+    def _filter_relevant_tools(self, available_tools: List[str], user_request: str) -> List[str]:
+        """ユーザー要求に基づいて関連ツールをフィルタリング"""
+        if not user_request:
+            return available_tools
+        
+        # キーワードベースのフィルタリング
+        user_lower = user_request.lower()
+        
+        # 追加関連キーワード
+        add_keywords = ["追加", "入れる", "保管", "新規", "増やす"]
+        if any(keyword in user_lower for keyword in add_keywords):
+            return [tool for tool in available_tools if "add" in tool]
+        
+        # 更新関連キーワード
+        update_keywords = ["変更", "変える", "替える", "更新", "修正", "本数", "数量"]
+        if any(keyword in user_lower for keyword in update_keywords):
+            return [tool for tool in available_tools if "update" in tool]
+        
+        # 削除関連キーワード
+        delete_keywords = ["削除", "消す", "捨てる", "処分", "なくす"]
+        if any(keyword in user_lower for keyword in delete_keywords):
+            return [tool for tool in available_tools if "delete" in tool]
+        
+        # 確認関連キーワード
+        list_keywords = ["一覧", "確認", "見る", "表示", "教えて"]
+        if any(keyword in user_lower for keyword in list_keywords):
+            return [tool for tool in available_tools if "list" in tool or "get" in tool]
+        
+        # デフォルト: 全ツールを返す
+        return available_tools
+    
+    def _extract_parameter_info(self, input_schema: dict) -> str:
+        """入力スキーマからパラメータ情報を抽出"""
+        try:
+            if not input_schema or "properties" not in input_schema:
+                return ""
+            
+            properties = input_schema["properties"]
+            required = input_schema.get("required", [])
+            
+            param_list = []
+            for param_name, param_info in properties.items():
+                if param_name == "token":  # tokenは除外
+                    continue
+                
+                param_type = param_info.get("type", "unknown")
+                is_required = param_name in required
+                
+                if is_required:
+                    param_list.append(f"{param_name}({param_type}, 必須)")
+                else:
+                    param_list.append(f"{param_name}({param_type}, オプション)")
+            
+            return ", ".join(param_list) if param_list else ""
+            
+        except Exception as e:
+            logger.warning(f"⚠️ [計画立案] パラメータ情報抽出エラー: {str(e)}")
+            return ""
+    
+    def _get_fallback_tools_description(self, available_tools: List[str]) -> str:
+        """フォールバック用のツール説明"""
         tool_descriptions = {
             "inventory_add": """
 📋 inventory_add: 在庫にアイテムを1件追加

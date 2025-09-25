@@ -82,6 +82,11 @@ Morizo AI/
 - **最古→最新**: デフォルトで最古アイテムを優先
 - **ユーザー指定**: 「最新」指定時は最新アイテムを選択
 - **ID取得**: セッションから適切なIDを自動取得
+- **FIFO/最新削除機能**: 2025/9/25完了
+  - `inventory_delete_by_name_oldest`: FIFO原則による最古アイテム削除
+  - `inventory_delete_by_name_latest`: ユーザー指定による最新アイテム削除
+  - `inventory_update_by_name_oldest`: FIFO原則による最古アイテム更新
+  - `inventory_update_by_name_latest`: ユーザー指定による最新アイテム更新
 
 ### データベース連携
 - Supabase PostgreSQLとの連携

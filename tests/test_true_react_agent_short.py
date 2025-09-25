@@ -138,6 +138,38 @@ class TrueReactAgentShortTester:
         
         await asyncio.sleep(2)  # 2秒待機
     
+    async def test_prepare_fifo_data(self):
+        """テスト4.5: FIFO/最新削除テスト用データ準備"""
+        logger.info("🧪 テスト4.5: FIFO/最新削除テスト用データ準備")
+        
+        try:
+            # 牛乳を3つ追加（異なる作成日時でFIFOテスト用）
+            test_cases = [
+                "牛乳を1本追加して",
+                "牛乳を2本追加して", 
+                "牛乳を3本追加して"
+            ]
+            
+            for i, test_case in enumerate(test_cases, 1):
+                logger.info(f"🧪 テスト4.5-{i}: {test_case}")
+                response = await self._send_chat_request(test_case)
+                logger.info(f"✅ レスポンス: {response}")
+                
+                if "追加" in response and ("完了" in response or "追加しました" in response):
+                    logger.info(f"✅ テスト4.5-{i} 成功: 牛乳{i}本追加完了")
+                else:
+                    logger.warning(f"⚠️ テスト4.5-{i} 不明な結果: {response[:100]}...")
+                
+                await asyncio.sleep(1)  # 作成日時を分けるため1秒待機
+            
+            logger.info(f"✅ テスト4.5 成功: FIFO/最新削除テスト用データ準備完了")
+            
+        except Exception as e:
+            logger.error(f"❌ テスト4.5 エラー: {str(e)}")
+            logger.error(traceback.format_exc())
+        
+        await asyncio.sleep(2)  # 2秒待機
+    
     async def test_inventory_status(self):
         """テスト5: 在庫状況確認"""
         logger.info("🧪 テスト5: 在庫状況確認")
@@ -159,6 +191,94 @@ class TrueReactAgentShortTester:
             logger.error(traceback.format_exc())
         
         await asyncio.sleep(1)  # 1秒待機
+    
+    async def test_fifo_update_oldest(self):
+        """テスト6: FIFO原則による最古アイテム更新"""
+        logger.info("🧪 テスト6: FIFO原則による最古アイテム更新")
+        test_case = "牛乳の数量を3本に変更して"
+        logger.info(f"🧪 テスト6: {test_case}")
+        
+        try:
+            response = await self._send_chat_request(test_case)
+            logger.info(f"✅ レスポンス: {response}")
+            
+            # FIFO更新の確認
+            if "更新" in response and ("完了" in response or "変更" in response):
+                logger.info(f"✅ テスト6 成功: FIFO原則による最古アイテム更新完了")
+            else:
+                logger.warning(f"⚠️ テスト6 不明な結果: {response[:100]}...")
+            
+        except Exception as e:
+            logger.error(f"❌ テスト6 エラー: {str(e)}")
+            logger.error(traceback.format_exc())
+        
+        await asyncio.sleep(2)  # 2秒待機
+    
+    async def test_user_specified_latest(self):
+        """テスト7: ユーザー指定による最新アイテム更新"""
+        logger.info("🧪 テスト7: ユーザー指定による最新アイテム更新")
+        test_case = "最新の牛乳の本数を3本に変えて"
+        logger.info(f"🧪 テスト7: {test_case}")
+        
+        try:
+            response = await self._send_chat_request(test_case)
+            logger.info(f"✅ レスポンス: {response}")
+            
+            # ユーザー指定更新の確認
+            if "更新" in response and ("完了" in response or "変更" in response):
+                logger.info(f"✅ テスト7 成功: ユーザー指定による最新アイテム更新完了")
+            else:
+                logger.warning(f"⚠️ テスト7 不明な結果: {response[:100]}...")
+            
+        except Exception as e:
+            logger.error(f"❌ テスト7 エラー: {str(e)}")
+            logger.error(traceback.format_exc())
+        
+        await asyncio.sleep(2)  # 2秒待機
+    
+    async def test_fifo_delete_oldest(self):
+        """テスト8: FIFO原則による最古アイテム削除"""
+        logger.info("🧪 テスト8: FIFO原則による最古アイテム削除")
+        test_case = "牛乳の古い方を削除して"
+        logger.info(f"🧪 テスト8: {test_case}")
+        
+        try:
+            response = await self._send_chat_request(test_case)
+            logger.info(f"✅ レスポンス: {response}")
+            
+            # FIFO削除の確認
+            if "削除" in response and ("完了" in response or "処分" in response):
+                logger.info(f"✅ テスト8 成功: FIFO原則による最古アイテム削除完了")
+            else:
+                logger.warning(f"⚠️ テスト8 不明な結果: {response[:100]}...")
+            
+        except Exception as e:
+            logger.error(f"❌ テスト8 エラー: {str(e)}")
+            logger.error(traceback.format_exc())
+        
+        await asyncio.sleep(2)  # 2秒待機
+    
+    async def test_user_specified_delete_latest(self):
+        """テスト9: ユーザー指定による最新アイテム削除"""
+        logger.info("🧪 テスト9: ユーザー指定による最新アイテム削除")
+        test_case = "最新の牛乳を削除して"
+        logger.info(f"🧪 テスト9: {test_case}")
+        
+        try:
+            response = await self._send_chat_request(test_case)
+            logger.info(f"✅ レスポンス: {response}")
+            
+            # ユーザー指定削除の確認
+            if "削除" in response and ("完了" in response or "処分" in response):
+                logger.info(f"✅ テスト9 成功: ユーザー指定による最新アイテム削除完了")
+            else:
+                logger.warning(f"⚠️ テスト9 不明な結果: {response[:100]}...")
+            
+        except Exception as e:
+            logger.error(f"❌ テスト9 エラー: {str(e)}")
+            logger.error(traceback.format_exc())
+        
+        await asyncio.sleep(2)  # 2秒待機
     
     async def _send_chat_request(self, message: str) -> str:
         """チャットリクエストを送信"""
@@ -229,8 +349,23 @@ class TrueReactAgentShortTester:
             await self.test_bulk_delete_by_name()
             await asyncio.sleep(2)
             
-            await self.test_inventory_status()
+            await self.test_prepare_fifo_data()
+            await asyncio.sleep(2)
             
+            await self.test_inventory_status()
+            await asyncio.sleep(2)
+            
+            await self.test_fifo_update_oldest()
+            await asyncio.sleep(2)
+            
+            await self.test_user_specified_latest()
+            await asyncio.sleep(2)
+            
+            await self.test_fifo_delete_oldest()
+            await asyncio.sleep(2)
+            
+            await self.test_user_specified_delete_latest()
+        
         except Exception as e:
             logger.error(f"❌ テスト実行エラー: {str(e)}")
             logger.error(traceback.format_exc())
@@ -238,8 +373,8 @@ class TrueReactAgentShortTester:
         finally:
             # クリーンアップ
             await self.cleanup()
-        
-        logger.info("🎉 真のReActエージェント短めテスト完了（シンプル版）")
+    
+    logger.info("🎉 真のReActエージェント短めテスト完了（シンプル版）")
 
 async def main():
     """メイン関数"""

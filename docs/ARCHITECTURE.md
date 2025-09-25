@@ -132,6 +132,10 @@ DB MCP Server（データベース操作）
 - `inventory_delete_by_id` - ID指定削除
 - `inventory_update_by_name` - 名前指定一括更新
 - `inventory_delete_by_name` - 名前指定一括削除
+- `inventory_update_by_name_oldest` - FIFO原則による最古アイテム更新
+- `inventory_update_by_name_latest` - ユーザー指定による最新アイテム更新
+- `inventory_delete_by_name_oldest` - FIFO原則による最古アイテム削除
+- `inventory_delete_by_name_latest` - ユーザー指定による最新アイテム削除
 - `inventory_list` - 在庫一覧取得
 
 ## 🔐 認証システム

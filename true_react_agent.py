@@ -52,7 +52,7 @@ class TrueReactAgent:
         
         try:
             # Phase 1: 行動計画立案
-            tasks = self.planner.create_plan(user_request, available_tools)
+            tasks = await self.planner.create_plan(user_request, available_tools)
             
             # タスクが空の場合（挨拶など）は直接LLM応答を返す
             if not tasks or len(tasks) == 0:
