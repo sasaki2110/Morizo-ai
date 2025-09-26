@@ -70,7 +70,7 @@ async def test_recipe_mcp():
                         data = response_data.get('data', {})
                         print(f"   主菜: {data.get('main_dish', {}).get('title', 'N/A')}")
                         print(f"   副菜: {data.get('side_dish', {}).get('title', 'N/A')}")
-                        print(f"   味噌汁: {data.get('soup', {}).get('title', 'N/A')}")
+                        print(f"   汁物: {data.get('soup', {}).get('title', 'N/A')}")
                         print(f"   使用食材数: {len(data.get('ingredient_usage', {}).get('used', []))}")
                         print(f"   残り食材数: {len(data.get('ingredient_usage', {}).get('remaining', []))}")
                         print(f"   除外レシピ数: {len(data.get('excluded_recipes', []))}")
@@ -105,7 +105,7 @@ async def test_recipe_mcp():
                         data = response_data.get('data', {})
                         print(f"   主菜: {data.get('main_dish', {}).get('title', 'N/A')}")
                         print(f"   副菜: {data.get('side_dish', {}).get('title', 'N/A')}")
-                        print(f"   味噌汁: {data.get('soup', {}).get('title', 'N/A')}")
+                        print(f"   汁物: {data.get('soup', {}).get('title', 'N/A')}")
                         print(f"   使用食材数: {len(data.get('ingredient_usage', {}).get('used', []))}")
                         print(f"   残り食材数: {len(data.get('ingredient_usage', {}).get('remaining', []))}")
                     else:
@@ -139,7 +139,7 @@ async def test_recipe_mcp():
                         data = response_data.get('data', {})
                         print(f"   主菜: {data.get('main_dish', {}).get('title', 'N/A')}")
                         print(f"   副菜: {data.get('side_dish', {}).get('title', 'N/A')}")
-                        print(f"   味噌汁: {data.get('soup', {}).get('title', 'N/A')}")
+                        print(f"   汁物: {data.get('soup', {}).get('title', 'N/A')}")
                         print(f"   使用食材数: {len(data.get('ingredient_usage', {}).get('used', []))}")
                         print(f"   残り食材数: {len(data.get('ingredient_usage', {}).get('remaining', []))}")
                     else:

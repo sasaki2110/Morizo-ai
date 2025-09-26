@@ -73,7 +73,7 @@ async def generate_menu_with_llm(
         
         # シンプルなプロンプト（食材を丸投げ）
         prompt = f"""
-あなたは料理の専門家です。在庫食材から3品構成の献立（主菜・副菜・味噌汁）を提案してください。
+あなたは料理の専門家です。在庫食材から3品構成の献立（主菜・副菜・汁物）を提案してください。
 
 【在庫食材】
 {', '.join(inventory_items)}
@@ -173,8 +173,8 @@ async def generate_menu_plan_with_history(
                 "ingredients": ["ほうれん草", "胡麻", "醤油"]
             },
             "soup": {
-                "title": "豆腐とわかめの味噌汁",
-                "ingredients": ["豆腐", "わかめ", "味噌", "だし"]
+                "title": "白菜とハムのクリームスープ",
+                "ingredients": ["白菜", "ハム", "牛乳", "バター", "小麦粉"]
             },
             "excluded_recipes": ["フレンチトースト", "オムレツ"]
         }
