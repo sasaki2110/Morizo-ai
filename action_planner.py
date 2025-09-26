@@ -211,24 +211,20 @@ class ActionPlanner:
                 logger.warning("⚠️ [計画立案] ツール詳細取得失敗、フォールバック使用")
                 return self._get_fallback_tools_description(relevant_tools)
             
-            # 動的に取得したツール説明をフォーマット（パラメータ情報含む）
+            # 動的に取得したツール説明をフォーマット（大幅短縮版）
             descriptions = []
             for tool_name in relevant_tools:
                 if tool_name in tool_details:
                     tool_info = tool_details[tool_name]
-                    # 説明文を短縮（100文字以内、トークン節約）
+                    # 説明文を大幅短縮（30文字以内、トークン大幅節約）
                     full_description = tool_info["description"]
                     # 最初の文のみ抽出（。で区切る）
                     first_sentence = full_description.split('。')[0] if '。' in full_description else full_description
-                    # 100文字以内に制限（FIFO関連情報を含めるため拡張）
-                    short_description = first_sentence[:100] + "..." if len(first_sentence) > 100 else first_sentence
+                    # 30文字以内に制限（大幅短縮）
+                    short_description = first_sentence[:30] + "..." if len(first_sentence) > 30 else first_sentence
                     
-                    # パラメータ情報を追加
-                    param_info = self._extract_parameter_info(tool_info.get("input_schema", {}))
-                    if param_info:
-                        descriptions.append(f"{tool_name}: {short_description}\n  パラメータ: {param_info}")
-                    else:
-                        descriptions.append(f"{tool_name}: {short_description}")
+                    # パラメータ情報は削除（トークン節約のため）
+                    descriptions.append(f"{tool_name}: {short_description}")
                 else:
                     logger.warning(f"⚠️ [計画立案] ツール {tool_name} の詳細情報が見つかりません")
             
@@ -239,35 +235,91 @@ class ActionPlanner:
             return self._get_fallback_tools_description(available_tools)
     
     def _filter_relevant_tools(self, available_tools: List[str], user_request: str) -> List[str]:
-        """ユーザー要求に基づいて関連ツールをフィルタリング"""
+        """ユーザー要求に基づいて関連ツールをフィルタリング（階層的アプローチ）"""
         if not user_request:
-            return available_tools
+            return []
         
-        # キーワードベースのフィルタリング
+        # ステップ1: シンプル応答パターンの検出（最優先）
+        if self._is_simple_response_pattern(user_request):
+            logger.info(f"🔍 [フィルタ] シンプル応答パターン検出: {user_request}")
+            return []
+        
+        # ステップ2: 在庫・レシピ関連の検出
         user_lower = user_request.lower()
+        relevant_tools = []
+        
+        # 在庫管理関連キーワード
+        inventory_tools = self._filter_inventory_tools(available_tools, user_lower)
+        relevant_tools.extend(inventory_tools)
+        
+        # レシピ・献立関連キーワード
+        recipe_tools = self._filter_recipe_tools(available_tools, user_lower)
+        relevant_tools.extend(recipe_tools)
+        
+        # ステップ3: 結果の統合
+        if not relevant_tools:
+            logger.info(f"🔍 [フィルタ] 関連ツールなし、シンプル応答: {user_request}")
+            return []
+        
+        logger.info(f"🔍 [フィルタ] 関連ツール: {len(relevant_tools)}/{len(available_tools)}個")
+        return relevant_tools
+    
+    def _is_simple_response_pattern(self, user_request: str) -> bool:
+        """シンプル応答が必要なパターンを検出"""
+        patterns = {
+            "greeting": ["こんにちは", "おはよう", "こんばんは", "お疲れ様", "ありがとう", "よろしく"],
+            "weather": ["天気", "雨", "晴れ", "曇り", "寒い", "暑い", "気温"],
+            "health": ["元気", "調子", "疲れ", "具合", "体調", "健康"],
+            "time": ["何時", "時間", "今日", "明日", "昨日", "今"],
+            "casual": ["どう", "いかが", "すみません", "お願い", "よろしくお願いします"],
+            "thanks": ["ありがとう", "感謝", "助かった", "助かりました"]
+        }
+        
+        user_lower = user_request.lower()
+        return any(
+            any(keyword in user_lower for keyword in keywords)
+            for keywords in patterns.values()
+        )
+    
+    def _filter_inventory_tools(self, available_tools: List[str], user_lower: str) -> List[str]:
+        """在庫管理関連ツールをフィルタリング"""
+        inventory_tools = []
         
         # 追加関連キーワード
-        add_keywords = ["追加", "入れる", "保管", "新規", "増やす"]
+        add_keywords = ["追加", "入れる", "保管", "新規", "増やす", "買った", "購入"]
         if any(keyword in user_lower for keyword in add_keywords):
-            return [tool for tool in available_tools if "add" in tool]
+            inventory_tools.extend([tool for tool in available_tools if "add" in tool])
         
         # 更新関連キーワード
-        update_keywords = ["変更", "変える", "替える", "更新", "修正", "本数", "数量"]
+        update_keywords = ["変更", "変える", "替える", "更新", "修正", "本数", "数量", "クリア"]
         if any(keyword in user_lower for keyword in update_keywords):
-            return [tool for tool in available_tools if "update" in tool]
+            inventory_tools.extend([tool for tool in available_tools if "update" in tool])
         
         # 削除関連キーワード
-        delete_keywords = ["削除", "消す", "捨てる", "処分", "なくす"]
+        delete_keywords = ["削除", "消す", "捨てる", "処分", "なくす", "使った", "消費"]
         if any(keyword in user_lower for keyword in delete_keywords):
-            return [tool for tool in available_tools if "delete" in tool]
+            inventory_tools.extend([tool for tool in available_tools if "delete" in tool])
         
         # 確認関連キーワード
-        list_keywords = ["一覧", "確認", "見る", "表示", "教えて"]
+        list_keywords = ["一覧", "確認", "見る", "表示", "教えて", "在庫", "冷蔵庫", "中身"]
         if any(keyword in user_lower for keyword in list_keywords):
-            return [tool for tool in available_tools if "list" in tool or "get" in tool]
+            inventory_tools.extend([tool for tool in available_tools if "list" in tool or "get" in tool])
         
-        # デフォルト: 全ツールを返す
-        return available_tools
+        return list(set(inventory_tools))  # 重複除去
+    
+    def _filter_recipe_tools(self, available_tools: List[str], user_lower: str) -> List[str]:
+        """レシピ・献立関連ツールをフィルタリング"""
+        recipe_tools = []
+        
+        # レシピ・献立関連キーワード
+        recipe_keywords = [
+            "献立", "レシピ", "料理", "メニュー", "食事", "夕飯", "昼飯", "朝飯", "ご飯",
+            "作る", "調理", "クッキング", "提案", "考えて", "何ができる", "作れる"
+        ]
+        if any(keyword in user_lower for keyword in recipe_keywords):
+            recipe_tools.extend([tool for tool in available_tools if "generate_menu" in tool or "search_recipe" in tool])
+        
+        return list(set(recipe_tools))  # 重複除去
     
     def _extract_parameter_info(self, input_schema: dict) -> str:
         """入力スキーマからパラメータ情報を抽出"""
@@ -298,110 +350,18 @@ class ActionPlanner:
             return ""
     
     def _get_fallback_tools_description(self, available_tools: List[str]) -> str:
-        """フォールバック用のツール説明"""
+        """フォールバック用のツール説明（大幅短縮版）"""
         tool_descriptions = {
-            "inventory_add": """
-📋 inventory_add: 在庫にアイテムを1件追加
-🎯 使用場面: 「入れる」「追加」「保管」等のキーワードでユーザーが新たに在庫を作成する場合
-⚠️ 重要: item_idは自動採番されるため、パラメータには不要です。
-📋 JSON形式:
-{
-    "description": "アイテムを在庫に追加する",
-    "tool": "inventory_add",
-    "parameters": {
-        "item_name": "アイテム名",
-        "quantity": 数量,
-        "unit": "単位",
-        "storage_location": "保管場所",
-        "expiry_date": "消費期限（オプション）"
-    },
-    "priority": 1,
-    "dependencies": []
-}
-""",
-            "inventory_update_by_id": """
-📋 inventory_update_by_id: ID指定での在庫アイテム1件更新
-🎯 使用場面: 「変更」「変える」「替える」「かえる」「更新」「クリア」等のキーワードでユーザーが在庫を更新する場合
-⚠️ 重要: item_idは**必須です**。必ず在庫情報のitem_idを確認して、設定してください。
-📋 JSON形式:
-{
-    "description": "アイテムを更新する",
-    "tool": "inventory_update_by_id",
-    "parameters": {
-        "item_id": "対象のID（必須）",
-        "item_name": "アイテム名",
-        "quantity": 数量,
-        "unit": "単位",
-        "storage_location": "保管場所",
-        "expiry_date": "消費期限"
-    },
-    "priority": 1,
-    "dependencies": []
-}
-""",
-            "inventory_delete_by_id": """
-📋 inventory_delete_by_id: ID指定での在庫アイテム1件削除
-🎯 使用場面: 「削除」「消す」「捨てる」「処分」等のキーワードでユーザーが特定のアイテムを削除する場合
-⚠️ 重要: item_idパラメータは必須です。
-📋 JSON形式:
-{
-    "description": "アイテムを削除する",
-    "tool": "inventory_delete_by_id",
-    "parameters": {
-        "item_id": "対象のID（必須）"
-    },
-    "priority": 1,
-    "dependencies": []
-}
-""",
-            "inventory_update_by_name": """
-📋 inventory_update_by_name: 名前指定での在庫アイテム一括更新
-🎯 使用場面: 「全部」「一括」「全て」等のキーワードで複数のアイテムを同時に更新する場合
-⚠️ 重要: quantityパラメータは更新する値です。更新対象件数ではありません。
-📋 JSON形式:
-{
-    "description": "アイテムを一括更新する",
-    "tool": "inventory_update_by_name",
-    "parameters": {
-        "item_name": "アイテム名（必須）",
-        "quantity": "更新後の数量（オプション）",
-        "unit": "単位（オプション）",
-        "storage_location": "保管場所（オプション）",
-        "expiry_date": "消費期限（オプション）"
-    },
-    "priority": 1,
-    "dependencies": []
-}
-""",
-            "inventory_delete_by_name": """
-📋 inventory_delete_by_name: 名前指定での在庫アイテム一括削除
-🎯 使用場面: 「全部」「一括」「全て」等のキーワードで複数のアイテムを同時に削除する場合
-📋 JSON形式:
-{
-    "description": "アイテムを一括削除する",
-    "tool": "inventory_delete_by_name",
-    "parameters": {
-        "item_name": "アイテム名（必須）"
-    },
-    "priority": 1,
-    "dependencies": []
-}
-""",
-            "inventory_list": """
-📋 inventory_list: 在庫一覧を取得
-🎯 使用場面: 「在庫を教えて」「今の在庫は？」等のキーワードでユーザーが在庫状況を確認する場合
-📋 JSON形式:
-{
-    "description": "在庫一覧を取得する",
-    "tool": "inventory_list",
-    "parameters": {},
-    "priority": 1,
-    "dependencies": []
-}
-"""
+            "inventory_add": "inventory_add: 在庫追加",
+            "inventory_update_by_id": "inventory_update_by_id: ID指定更新",
+            "inventory_delete_by_id": "inventory_delete_by_id: ID指定削除",
+            "inventory_update_by_name": "inventory_update_by_name: 名前指定一括更新",
+            "inventory_delete_by_name": "inventory_delete_by_name: 名前指定一括削除",
+            "inventory_list": "inventory_list: 在庫一覧取得",
+            "generate_menu_plan_with_history": "generate_menu_plan_with_history: 献立生成"
         }
         
-        # 利用可能なツールの説明を結合
+        # 利用可能なツールの説明を結合（簡潔版）
         descriptions = []
         for tool in available_tools:
             if tool in tool_descriptions:

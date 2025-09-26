@@ -232,9 +232,8 @@ class TrueReactAgent:
             実行結果
         """
         try:
-            # MCPツールを実行（main.pyのMCPClientを使用）
-            from agents.mcp_client import MCPClient
-            mcp_client = MCPClient()
+            # MCPツールを実行（新しいcall_mcp_tool関数を使用）
+            from agents.mcp_client import call_mcp_tool
             
             # トークンを追加
             params = decision["parameters"].copy()
@@ -243,7 +242,7 @@ class TrueReactAgent:
             logger.info(f"🎬 [行動] {decision['tool']} 実行開始")
             logger.info(f"🎬 [行動] パラメータ: {params}")
             
-            result = await mcp_client.call_tool(
+            result = await call_mcp_tool(
                 decision["tool"],
                 params
             )

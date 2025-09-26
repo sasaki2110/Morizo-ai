@@ -13,8 +13,21 @@ logger = logging.getLogger('morizo_ai.mcp')
 class MCPClient:
     """FastMCPクライアントのラッパークラス"""
     
-    def __init__(self):
-        self.client = Client("db_mcp_server_stdio.py")
+    def __init__(self, server_type: str = "db"):
+        """
+        MCPクライアントの初期化
+        
+        Args:
+            server_type: "db" (データベースMCP) または "recipe" (レシピMCP)
+        """
+        if server_type == "db":
+            self.client = Client("db_mcp_server_stdio.py")
+        elif server_type == "recipe":
+            self.client = Client("recipe_mcp_server_stdio.py")
+        else:
+            raise ValueError(f"Unknown server type: {server_type}")
+        
+        self.server_type = server_type
     
     async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """MCPツールを呼び出し"""
@@ -59,20 +72,67 @@ async def get_available_tools_from_mcp() -> List[str]:
         利用可能なツール一覧
     """
     try:
-        client = Client("db_mcp_server_stdio.py")
-        available_tools = []
+        all_tools = []
         
-        async with client:
-            tools = await client.list_tools()
-            
-            for tool in tools:
-                available_tools.append(tool.name)
-            
-            logger.info(f"🔧 [FastMCP] 利用可能なツール: {available_tools}")
+        # DB MCPサーバーからツールを取得
+        try:
+            db_client = Client("db_mcp_server_stdio.py")
+            async with db_client:
+                tools = await db_client.list_tools()
+                for tool in tools:
+                    all_tools.append(tool.name)
+            logger.info(f"🔧 [FastMCP] DB MCPツール: {len(tools)}個")
+        except Exception as e:
+            logger.warning(f"⚠️ [FastMCP] DB MCPツール取得エラー: {str(e)}")
         
-        return available_tools
+        # レシピMCPサーバーからツールを取得
+        try:
+            recipe_client = Client("recipe_mcp_server_stdio.py")
+            async with recipe_client:
+                tools = await recipe_client.list_tools()
+                for tool in tools:
+                    all_tools.append(tool.name)
+            logger.info(f"🔧 [FastMCP] Recipe MCPツール: {len(tools)}個")
+        except Exception as e:
+            logger.warning(f"⚠️ [FastMCP] Recipe MCPツール取得エラー: {str(e)}")
+        
+        logger.info(f"🔧 [FastMCP] 総利用可能ツール: {all_tools}")
+        return all_tools
         
     except Exception as e:
         logger.error(f"❌ [FastMCP] ツール一覧取得エラー: {str(e)}")
         # フォールバック
-        return ["inventory_add", "inventory_list", "inventory_get", "inventory_update_by_id", "inventory_delete_by_id", "inventory_update_by_name", "inventory_delete_by_name", "inventory_update_by_name_oldest", "inventory_update_by_name_latest"]
+        return ["inventory_add", "inventory_list", "inventory_get", "inventory_update_by_id", "inventory_delete_by_id", "inventory_update_by_name", "inventory_delete_by_name", "inventory_update_by_name_oldest", "inventory_update_by_name_latest", "generate_menu_plan_with_history"]
+
+
+async def call_mcp_tool(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    適切なMCPサーバーでツールを呼び出し
+    
+    Args:
+        tool_name: 呼び出すツール名
+        arguments: ツールの引数
+    
+    Returns:
+        ツールの実行結果
+    """
+    try:
+        # ツール名から適切なMCPサーバーを判定
+        if tool_name.startswith("inventory_") or tool_name.startswith("recipes_"):
+            server_type = "db"
+        elif tool_name.startswith("generate_menu_") or tool_name.startswith("search_recipe_"):
+            server_type = "recipe"
+        else:
+            # デフォルトはDB MCP
+            server_type = "db"
+        
+        logger.info(f"🔧 [FastMCP] ツール {tool_name} を {server_type} MCPで実行")
+        
+        client = MCPClient(server_type)
+        result = await client.call_tool(tool_name, arguments)
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"❌ [FastMCP] ツール呼び出しエラー: {str(e)}")
+        return {"success": False, "error": f"MCP tool error: {str(e)}"}
