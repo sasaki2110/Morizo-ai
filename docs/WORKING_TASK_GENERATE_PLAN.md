@@ -52,7 +52,7 @@
 ```
 1. generate_menu_plan: 献立構成生成
 2. check_cooking_history: 過去履歴チェック
-3. search_recipe_for_menu: 献立用レシピ検索
+3. search_recipe_from_rag: RAG検索によるレシピ検索
 ```
 
 ## 📅 実装の優先順位
@@ -128,7 +128,7 @@
   - [ ] 食材の組み合わせパターン学習
   - [ ] 文化的適切性の向上（日本の食文化に合った提案）
   - [ ] レシピタイトル精度向上の実装
-- [ ] **`search_recipe_for_menu`** - 献立用レシピ検索
+- [ ] **`search_recipe_from_rag`** - RAG検索によるレシピ検索
   - [ ] 料理タイプ別の検索（主菜・副菜・汁物）
   - [ ] 食材制約の考慮
   - [ ] 使用禁止食材の除外

@@ -72,7 +72,7 @@ MENU_CONSTRAINTS = {
 ```
 1. generate_menu_plan: 献立構成生成
 2. check_cooking_history: 過去履歴チェック
-3. search_recipe_for_menu: 献立用レシピ検索
+3. search_recipe_from_rag: RAG検索によるレシピ検索
 4. （統合提案機能は削除）
 ```
 
@@ -102,9 +102,9 @@ MENU_CONSTRAINTS = {
   ├─ 過去履歴をチェック ← データベースで履歴確認
   ├─ 重複があれば代替案生成 ← LLMが代替タイトルを生成
   └─ 最終的な献立を決定 ← タイトルのみ決定
-サイクル3: search_recipe_for_menu 実行 (主菜) ← Web検索のみ
-サイクル4: search_recipe_for_menu 実行 (副菜) ← Web検索のみ
-サイクル5: search_recipe_for_menu 実行 (汁物) ← Web検索のみ
+サイクル3: search_recipe_from_rag 実行 (主菜) ← RAG検索のみ
+サイクル4: search_recipe_from_rag 実行 (副菜) ← RAG検索のみ
+サイクル5: search_recipe_from_rag 実行 (汁物) ← RAG検索のみ
 ```
 
 #### **責任分離の明確化**
@@ -283,12 +283,12 @@ RECIPE_GENERATION_PROMPT = """
 """
 ```
 
-### **3. search_recipe_for_menu（献立用レシピ検索）**
+### **3. search_recipe_from_rag（RAG検索によるレシピ検索）**
 
 #### **仕様（修正版）**
 ```python
 @mcp.tool()
-async def search_recipe_for_menu(
+async def search_recipe_from_rag(
     dish_type: str,  # "主菜", "副菜", "汁物"
     title: str,
     available_ingredients: List[str],
@@ -323,12 +323,12 @@ async def search_recipe_for_menu(
 
 #### **処理フロー（修正版）**
 ```python
-async def search_recipe_for_menu(dish_type, title, available_ingredients, excluded_ingredients):
-    # 1. Web検索でレシピを検索
-    web_results = await web_search_recipe(title)
+async def search_recipe_from_rag(dish_type, title, available_ingredients, excluded_ingredients):
+    # 1. RAG検索でレシピを検索
+    rag_results = await rag_search_recipe(title)
     
     # 2. 食材の互換性をチェック
-    compatible_recipes = filter_by_ingredients(web_results, available_ingredients, excluded_ingredients)
+    compatible_recipes = filter_by_ingredients(rag_results, available_ingredients, excluded_ingredients)
     
     # 3. 最適なレシピを選択
     best_recipe = select_best_recipe(compatible_recipes, dish_type)
@@ -543,7 +543,7 @@ MATCHING_SCORE_CALCULATION = {
 3. **食材配分アルゴリズム**: 重複回避のロジック
 
 ### **Phase 3: レシピ検索機能**
-1. **`search_recipe_for_menu`**: 献立用レシピ検索
+1. **`search_recipe_from_rag`**: RAG検索によるレシピ検索
 2. **食材制約**: 使用禁止食材の考慮
 3. **統合検索**: Web + RAG の統合
 
@@ -582,7 +582,7 @@ MATCHING_SCORE_CALCULATION = {
     },
     {
       "description": "主菜のレシピを検索",
-      "tool": "search_recipe_for_menu",
+      "tool": "search_recipe_from_rag",
       "parameters": {
         "dish_type": "主菜",
         "title": "{{task2_result.main_dish.title}}",
@@ -594,7 +594,7 @@ MATCHING_SCORE_CALCULATION = {
     },
     {
       "description": "副菜のレシピを検索",
-      "tool": "search_recipe_for_menu",
+      "tool": "search_recipe_from_rag",
       "parameters": {
         "dish_type": "副菜",
         "title": "{{task2_result.side_dish.title}}",
@@ -606,7 +606,7 @@ MATCHING_SCORE_CALCULATION = {
     },
     {
       "description": "汁物のレシピを検索",
-      "tool": "search_recipe_for_menu",
+      "tool": "search_recipe_from_rag",
       "parameters": {
         "dish_type": "汁物",
         "title": "{{task2_result.soup.title}}",
@@ -628,9 +628,9 @@ MATCHING_SCORE_CALCULATION = {
   ├─ 過去履歴をチェック ← データベースで履歴確認
   ├─ 重複があれば代替案生成 ← LLMが代替タイトルを生成
   └─ 最終的な献立を決定 ← タイトルのみ決定
-サイクル3: search_recipe_for_menu 実行 (主菜) ← Web検索のみ
-サイクル4: search_recipe_for_menu 実行 (副菜) ← Web検索のみ
-サイクル5: search_recipe_for_menu 実行 (汁物) ← Web検索のみ
+サイクル3: search_recipe_from_rag 実行 (主菜) ← RAG検索のみ
+サイクル4: search_recipe_from_rag 実行 (副菜) ← RAG検索のみ
+サイクル5: search_recipe_from_rag 実行 (汁物) ← RAG検索のみ
 ```
 
 ### **最終応答生成**
