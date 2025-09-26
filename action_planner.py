@@ -265,7 +265,7 @@ class ActionPlanner:
         return relevant_tools
     
     def _is_simple_response_pattern(self, user_request: str) -> bool:
-        """シンプル応答が必要なパターンを検出"""
+        """シンプル応答が必要なパターンを検出（キーワードマッチング版）"""
         patterns = {
             "greeting": ["こんにちは", "おはよう", "こんばんは", "お疲れ様", "ありがとう", "よろしく"],
             "weather": ["天気", "雨", "晴れ", "曇り", "寒い", "暑い", "気温"],
@@ -280,6 +280,7 @@ class ActionPlanner:
             any(keyword in user_lower for keyword in keywords)
             for keywords in patterns.values()
         )
+    
     
     def _filter_inventory_tools(self, available_tools: List[str], user_lower: str) -> List[str]:
         """在庫管理関連ツールをフィルタリング"""

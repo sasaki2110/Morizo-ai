@@ -14,8 +14,8 @@ langchain-community>=0.0.20
 chromadb>=0.4.0
 
 # Web検索API
-google-api-python-client>=2.100.0
-google-search-results>=2.4.2
+perplexity-api>=0.1.0
+requests>=2.31.0
 
 # データベース・認証
 supabase>=2.19.0
