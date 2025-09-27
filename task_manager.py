@@ -50,6 +50,26 @@ class TaskManager:
         logger.info("📋 [タスク管理] 実行可能なタスクがありません")
         return None
     
+    def get_task_by_id(self, task_id: str) -> Optional[Task]:
+        """
+        タスクIDでタスクを取得する
+        
+        Args:
+            task_id: タスクID
+            
+        Returns:
+            該当するタスク（見つからない場合はNone）
+        """
+        # 全タスクリストから検索
+        all_tasks = self.tasks + self.completed_tasks + self.failed_tasks
+        
+        for task in all_tasks:
+            if task.id == task_id:
+                return task
+        
+        logger.warning(f"⚠️ [タスク管理] タスクIDが見つかりません: {task_id}")
+        return None
+    
     def mark_task_in_progress(self, task: Task):
         """
         タスクを実行中にマークする

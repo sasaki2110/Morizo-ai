@@ -36,10 +36,13 @@ class Task:
     status: str = "pending"  # pending, in_progress, completed, failed
     priority: int = 1  # 1=高, 2=中, 3=低
     dependencies: List[str] = None  # 依存するタスクのID
+    result: Dict[str, Any] = None  # 実行結果
     
     def __post_init__(self):
         if self.dependencies is None:
             self.dependencies = []
+        if self.result is None:
+            self.result = {}
 
 class ActionPlanner:
     """行動計画立案クラス"""
@@ -95,21 +98,94 @@ class ActionPlanner:
    - 異なるアイテムは個別タスクに分解
    - 同一アイテムでも個別IDで処理
 
-**重要**: 必ず以下のJSON形式で回答してください：
+**重要**: 必ず以下のJSON形式で回答してください（コメントは禁止）：
 
 {{
     "tasks": [
         {{
+            "id": "task1",
             "description": "タスクの説明",
             "tool": "使用するツール名",
             "parameters": {{
-                // ツールが求めるJSON形式で記述
+                "key": "value"
             }},
             "priority": 1,
             "dependencies": []
         }}
     ]
 }}
+
+**依存関係のルール**:
+- 各タスクには一意のIDを付与してください（task1, task2, task3...）
+- 依存関係は他のタスクのIDで指定してください
+- 依存関係がない場合は空配列[]を指定
+- 複数のタスクが同じ依存関係を持つ場合は並列実行可能です
+
+**例**:
+- 在庫取得 → 献立生成: dependencies: ["inventory_fetch"]
+- 在庫取得 → 献立生成 + 買い物リスト: 献立生成と買い物リストは並列実行可能
+
+**在庫追加後の献立生成のルール**:
+- 在庫追加（inventory_add）を行った後、献立生成（generate_menu_plan_with_history）を実行する場合は、必ず在庫一覧取得（inventory_list）を間に挟む
+- 例: inventory_add → inventory_list → generate_menu_plan_with_history
+- 在庫追加と献立生成を同時に要求された場合:
+  1. inventory_add タスク（並列実行可能）
+  2. inventory_list タスク（在庫追加の依存関係）
+  3. generate_menu_plan_with_history タスク（在庫一覧の依存関係）
+
+**重要なパラメータ名**:
+- generate_menu_plan_with_history: inventory_items (必須), excluded_recipes, menu_type
+- inventory_list: パラメータなし
+- その他のツール: 各ツールの仕様に従って正しいパラメータ名を使用
+
+**パラメータ例**:
+- 献立生成: {{"inventory_items": ["鶏もも肉", "もやし", "パン"], "excluded_recipes": [], "menu_type": "和食"}}
+- 在庫一覧: {{}} (パラメータなし)
+
+**在庫追加+献立生成の具体例**:
+ユーザー要求: "牛すね肉と人参を追加して献立を教えて"
+正しいタスク構造:
+{{
+  "tasks": [
+    {{
+      "id": "task1",
+      "description": "牛すね肉を在庫に追加",
+      "tool": "inventory_add",
+      "parameters": {{"item_name": "牛すね肉", "quantity": 1}},
+      "priority": 1,
+      "dependencies": []
+    }},
+    {{
+      "id": "task2", 
+      "description": "人参を在庫に追加",
+      "tool": "inventory_add",
+      "parameters": {{"item_name": "人参", "quantity": 3}},
+      "priority": 1,
+      "dependencies": []
+    }},
+    {{
+      "id": "task3",
+      "description": "最新の在庫を取得",
+      "tool": "inventory_list", 
+      "parameters": {{}},
+      "priority": 2,
+      "dependencies": ["task1", "task2"]
+    }},
+    {{
+      "id": "task4",
+      "description": "在庫から献立を生成",
+      "tool": "generate_menu_plan_with_history",
+      "parameters": {{"inventory_items": [], "excluded_recipes": [], "menu_type": "和食"}},
+      "priority": 3,
+      "dependencies": ["task3"]
+    }}
+  ]
+}}
+
+**JSONの注意事項**:
+- コメント（//）は絶対に使用しない
+- すべての文字列は二重引用符で囲む
+- 有効なJSON形式のみを使用
 
 ツールを利用しない場合は、親しみやすい自然言語で回答してください。
 """
@@ -154,7 +230,7 @@ class ActionPlanner:
                     parameters["item_name"] = parameters.pop("item")
                 
                 task = Task(
-                    id=f"task_{self.task_counter}",
+                    id=task_data.get("id", f"task_{self.task_counter}"),
                     description=task_data["description"],
                     tool=task_data["tool"],
                     parameters=parameters,
@@ -428,20 +504,7 @@ class ActionPlanner:
             logger.warning("⚠️ [計画検証] タスクが空です")
             return False
         
-        # 依存関係を説明文からタスクIDに変換
-        for task in tasks:
-            if task.dependencies:
-                converted_deps = []
-                for dep_description in task.dependencies:
-                    # 説明文でタスクを検索
-                    dep_task = self._find_task_by_description(tasks, dep_description)
-                    if dep_task:
-                        converted_deps.append(dep_task.id)
-                    else:
-                        logger.warning(f"⚠️ [計画検証] 依存関係エラー: {dep_description}が見つかりません")
-                        return False
-                task.dependencies = converted_deps
-        
+        # Phase A: LLMが直接タスクIDを生成するため、変換処理は不要
         # 依存関係の検証
         task_ids = {task.id for task in tasks}
         for task in tasks:

@@ -71,42 +71,321 @@ class TrueReactAgent:
             
             logger.info(f"🤖 [真のReAct] {len(tasks)}個のタスクを生成")
             
-            # Phase 3: ReActループ
+            # Phase 3: 依存関係を考慮した実行順序の決定（Phase C: 並列実行対応）
+            execution_groups = self._resolve_dependencies_with_parallel(tasks)
+            logger.info(f"🤖 [真のReAct] 実行グループ: {execution_groups}")
+            
+            # Phase 4: ReActループ（並列実行対応）
             react_cycles = 0
-            while self.task_manager.has_remaining_tasks() and react_cycles < self.max_react_cycles:
+            completed_tasks = {}
+            
+            for group_index, task_group in enumerate(execution_groups):
                 react_cycles += 1
-                logger.info(f"🔄 [真のReAct] サイクル {react_cycles} 開始")
+                logger.info(f"🔄 [真のReAct] サイクル {react_cycles} 開始: グループ {group_index + 1} - {task_group}")
                 
-                # 次のタスクを取得
-                current_task = self.task_manager.get_next_task()
-                if not current_task:
-                    break
-                
-                # タスクを実行中にマーク
-                self.task_manager.mark_task_in_progress(current_task)
-                
-                # ReActステップを実行
-                result = await self._react_step(current_task, user_session)
-                
-                if result.get("success"):
-                    self.task_manager.mark_task_completed(current_task, result)
+                # グループ内のタスクを並列実行
+                if len(task_group) == 1:
+                    # 単一タスクの場合は従来通り実行
+                    task_id = task_group[0]
+                    current_task = next((t for t in tasks if t.id == task_id), None)
+                    if not current_task:
+                        logger.warning(f"⚠️ [真のReAct] タスク {task_id} が見つかりません")
+                        continue
+                    
+                    # 依存関係をチェック
+                    if not self._can_execute_task(current_task, completed_tasks):
+                        logger.warning(f"⚠️ [真のReAct] タスク {task_id} の依存関係が満たされていません")
+                        continue
+                    
+                    # タスクを実行中にマーク
+                    self.task_manager.mark_task_in_progress(current_task)
+                    
+                    # ReActステップを実行（Phase B: データフロー対応）
+                    result = await self._react_step(current_task, user_session, completed_tasks)
+                    
+                    if result.get("success"):
+                        self.task_manager.mark_task_completed(current_task, result)
+                        completed_tasks[task_id] = result
+                        logger.info(f"✅ [真のReAct] タスク {task_id} 完了")
+                    else:
+                        self.task_manager.mark_task_failed(current_task, result.get("error"))
+                        logger.error(f"❌ [真のReAct] タスク {task_id} 失敗: {result.get('error')}")
                 else:
-                    self.task_manager.mark_task_failed(current_task, result.get("error"))
+                    # 複数タスクの場合は並列実行
+                    group_results = await self._execute_parallel_tasks(task_group, tasks, user_session, completed_tasks)
+                    completed_tasks.update(group_results)
             
             # Phase 4: 完了報告
-            return await self._generate_completion_report(user_request)
+            return await self._generate_completion_report(user_request, completed_tasks)
             
         except Exception as e:
             logger.error(f"❌ [真のReAct] 処理エラー: {str(e)}")
             return f"申し訳ありません。処理中にエラーが発生しました: {str(e)}"
     
-    async def _react_step(self, task: Task, user_session) -> Dict[str, Any]:
+    def _resolve_dependencies(self, tasks: List[Task]) -> List[str]:
         """
-        単一のReActステップを実行する
+        依存関係を考慮した実行順序を決定する（Phase 1で学習したアルゴリズム）
+        
+        Args:
+            tasks: 実行するタスクのリスト
+            
+        Returns:
+            実行順序（タスクIDのリスト）
+        """
+        completed = set()
+        order = []
+        
+        logger.info(f"🔍 [依存関係解決] {len(tasks)}個のタスクの依存関係を解析")
+        
+        # 依存関係の詳細をログ出力
+        for task in tasks:
+            deps_str = ", ".join(task.dependencies) if task.dependencies else "なし"
+            logger.info(f"🔍 [依存関係解決] {task.id}: {task.description} (依存: [{deps_str}])")
+        
+        # 依存関係を解決して実行順序を決定
+        while len(completed) < len(tasks):
+            # 実行可能なタスクを探す
+            executable_tasks = [
+                task for task in tasks 
+                if task.id not in completed and 
+                all(dep in completed for dep in task.dependencies)
+            ]
+            
+            if not executable_tasks:
+                logger.error("❌ [依存関係解決] 循環依存または依存関係エラーが発生しました")
+                break
+            
+            # 最初に見つかった実行可能なタスクを実行
+            task = executable_tasks[0]
+            order.append(task.id)
+            completed.add(task.id)
+            logger.info(f"✅ [依存関係解決] 実行可能: {task.id}")
+        
+        logger.info(f"📝 [依存関係解決] 最終実行順序: {order}")
+        return order
+    
+    def _resolve_dependencies_with_parallel(self, tasks: List[Task]) -> List[List[str]]:
+        """
+        Phase C: 依存関係を考慮した実行順序を決定（並列実行対応）
+        
+        Args:
+            tasks: 実行するタスクのリスト
+            
+        Returns:
+            実行順序（並列実行可能なタスクのグループのリスト）
+        """
+        completed = set()
+        execution_groups = []
+        
+        logger.info(f"🔍 [並列依存関係解決] {len(tasks)}個のタスクの依存関係を解析")
+        
+        # 依存関係の詳細をログ出力
+        for task in tasks:
+            deps_str = ", ".join(task.dependencies) if task.dependencies else "なし"
+            logger.info(f"🔍 [並列依存関係解決] {task.id}: {task.description} (依存: [{deps_str}])")
+        
+        # 依存関係を解決して実行順序を決定（並列実行対応）
+        while len(completed) < len(tasks):
+            # 実行可能なタスクを探す
+            executable_tasks = [
+                task for task in tasks 
+                if task.id not in completed and 
+                all(dep in completed for dep in task.dependencies)
+            ]
+            
+            if not executable_tasks:
+                logger.error("❌ [並列依存関係解決] 循環依存または依存関係エラーが発生しました")
+                break
+            
+            # 実行可能なタスクのIDをグループ化
+            executable_ids = [task.id for task in executable_tasks]
+            execution_groups.append(executable_ids)
+            
+            # 完了したタスクに追加
+            for task_id in executable_ids:
+                completed.add(task_id)
+            
+            logger.info(f"✅ [並列依存関係解決] 並列実行グループ: {executable_ids}")
+        
+        logger.info(f"📝 [並列依存関係解決] 最終実行グループ: {execution_groups}")
+        return execution_groups
+    
+    def _can_execute_task(self, task: Task, completed_tasks: Dict[str, Any]) -> bool:
+        """
+        タスクが実行可能かどうかを判定する
+        
+        Args:
+            task: 判定するタスク
+            completed_tasks: 完了したタスクの辞書
+            
+        Returns:
+            実行可能かどうか
+        """
+        return all(dep in completed_tasks for dep in task.dependencies)
+    
+    async def _execute_parallel_tasks(self, task_ids: List[str], tasks: List[Task], user_session, completed_tasks: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Phase C: 複数のタスクを並列実行する
+        
+        Args:
+            task_ids: 並列実行するタスクのIDリスト
+            tasks: 全タスクのリスト
+            user_session: ユーザーセッション
+            completed_tasks: 完了したタスクの結果
+            
+        Returns:
+            実行結果の辞書
+        """
+        import asyncio
+        
+        logger.info(f"🚀 [並列実行] {len(task_ids)}個のタスクを並列実行: {task_ids}")
+        
+        # 並列実行するタスクを取得
+        parallel_tasks = [task for task in tasks if task.id in task_ids]
+        
+        # 各タスクのReActステップを並列実行
+        async def execute_single_task(task: Task) -> tuple[str, Dict[str, Any]]:
+            logger.info(f"🔄 [並列実行] タスク開始: {task.id}")
+            result = await self._react_step(task, user_session, completed_tasks)
+            logger.info(f"✅ [並列実行] タスク完了: {task.id}")
+            return task.id, result
+        
+        # asyncio.gatherで並列実行
+        try:
+            results = await asyncio.gather(*[execute_single_task(task) for task in parallel_tasks])
+            
+            # 結果を辞書に変換
+            result_dict = {}
+            for task_id, result in results:
+                result_dict[task_id] = result
+                
+                # TaskManagerに結果を記録
+                task = next(t for t in tasks if t.id == task_id)
+                if result.get("success"):
+                    self.task_manager.mark_task_completed(task, result)
+                    logger.info(f"✅ [並列実行] タスク {task_id} 完了")
+                else:
+                    self.task_manager.mark_task_failed(task, result.get("error"))
+                    logger.error(f"❌ [並列実行] タスク {task_id} 失敗: {result.get('error')}")
+            
+            logger.info(f"🎉 [並列実行] {len(task_ids)}個のタスクが並列実行完了")
+            return result_dict
+            
+        except Exception as e:
+            logger.error(f"❌ [並列実行] エラー: {str(e)}")
+            # エラーが発生した場合、各タスクを個別に実行
+            logger.info("🔄 [並列実行] フォールバック: 個別実行に切り替え")
+            result_dict = {}
+            for task in parallel_tasks:
+                try:
+                    result = await self._react_step(task, user_session, completed_tasks)
+                    result_dict[task.id] = result
+                    
+                    if result.get("success"):
+                        self.task_manager.mark_task_completed(task, result)
+                    else:
+                        self.task_manager.mark_task_failed(task, result.get("error"))
+                except Exception as task_error:
+                    logger.error(f"❌ [並列実行] 個別実行エラー {task.id}: {str(task_error)}")
+                    result_dict[task.id] = {"success": False, "error": str(task_error)}
+                    self.task_manager.mark_task_failed(task, str(task_error))
+            
+            return result_dict
+    
+    def _inject_dependency_results(self, task: Task, completed_tasks: Dict[str, Any]) -> Task:
+        """
+        Phase B: 依存タスクの結果を現在のタスクのパラメータに注入する
+        
+        Args:
+            task: 現在のタスク
+            completed_tasks: 完了したタスクの結果
+            
+        Returns:
+            パラメータが注入されたタスク
+        """
+        if not task.dependencies or not completed_tasks:
+            return task
+        
+        logger.info(f"🔄 [データフロー] {task.id} の依存関係結果を注入開始")
+        
+        # タスクのコピーを作成（元のタスクを変更しない）
+        enhanced_task = Task(
+            id=task.id,
+            description=task.description,
+            tool=task.tool,
+            parameters=task.parameters.copy(),  # パラメータをコピー
+            priority=task.priority,
+            dependencies=task.dependencies
+        )
+        
+        # 各依存タスクの結果を注入
+        for dep_id in task.dependencies:
+            if dep_id in completed_tasks:
+                dep_result = completed_tasks[dep_id]
+                logger.info(f"🔄 [データフロー] {dep_id} の結果を {task.id} に注入")
+                
+                # 特定のツール組み合わせに対するデータフロー処理
+                if self._should_inject_inventory_data(task, dep_result):
+                    self._inject_inventory_data(enhanced_task, dep_result)
+        
+        return enhanced_task
+    
+    def _should_inject_inventory_data(self, task: Task, dep_result: Dict[str, Any]) -> bool:
+        """
+        在庫データの注入が必要かどうかを判定
+        
+        Args:
+            task: 現在のタスク
+            dep_result: 依存タスクの結果
+            
+        Returns:
+            注入が必要かどうか
+        """
+        # inventory_list → generate_menu_plan_with_history の組み合わせ
+        # dep_resultの構造: {"success": True, "result": {...}}
+        return (task.tool == "generate_menu_plan_with_history" and
+                dep_result.get("success") is True and
+                "result" in dep_result)
+    
+    def _inject_inventory_data(self, task: Task, dep_result: Dict[str, Any]) -> None:
+        """
+        在庫データを献立生成タスクのパラメータに注入
+        
+        Args:
+            task: 注入先のタスク
+            dep_result: 在庫リストの結果
+        """
+        try:
+            # 在庫データを取得（dep_resultの構造: {"success": True, "result": {"data": [...]}}）
+            result_data = dep_result.get("result", {})
+            inventory_data = result_data.get("data", [])
+            
+            logger.info(f"🔄 [データフロー] 在庫データ構造確認: {type(inventory_data)}, 件数: {len(inventory_data) if isinstance(inventory_data, list) else 'N/A'}")
+            
+            # item_nameのリストを作成
+            inventory_items = []
+            for item in inventory_data:
+                if isinstance(item, dict) and "item_name" in item:
+                    inventory_items.append(item["item_name"])
+            
+            # パラメータに注入
+            if "inventory_items" in task.parameters:
+                task.parameters["inventory_items"] = inventory_items
+                logger.info(f"✅ [データフロー] inventory_items に {len(inventory_items)} 個のアイテムを注入: {inventory_items}")
+            else:
+                logger.warning(f"⚠️ [データフロー] inventory_items パラメータが見つかりません")
+                
+        except Exception as e:
+            logger.error(f"❌ [データフロー] 在庫データ注入エラー: {str(e)}")
+    
+    async def _react_step(self, task: Task, user_session, completed_tasks: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        単一のReActステップを実行する（Phase B: データフロー対応）
         
         Args:
             task: 実行するタスク
             user_session: ユーザーセッション
+            completed_tasks: 完了したタスクの結果（データフロー用）
             
         Returns:
             実行結果
@@ -114,14 +393,17 @@ class TrueReactAgent:
         logger.info(f"🔄 [ReAct] タスク実行: {task.description}")
         
         try:
+            # Phase B: データフロー - 依存タスクの結果をパラメータに注入
+            enhanced_task = self._inject_dependency_results(task, completed_tasks or {})
+            
             # 観察: 現在の状況を把握
-            observation = await self._observe(task, user_session)
+            observation = await self._observe(enhanced_task, user_session)
             
             # 思考: 最適な行動を決定
-            thought = await self._think(task, observation)
+            thought = await self._think(enhanced_task, observation)
             
             # 決定: 実行するツールを選択
-            decision = await self._decide(task, thought)
+            decision = await self._decide(enhanced_task, thought)
             
             # 行動: ツールを実行
             action_result = await self._act(decision, user_session)
@@ -235,9 +517,10 @@ class TrueReactAgent:
             # MCPツールを実行（新しいcall_mcp_tool関数を使用）
             from agents.mcp_client import call_mcp_tool
             
-            # トークンを追加
+            # トークンを追加（tokenが必要なツールのみ）
             params = decision["parameters"].copy()
-            params["token"] = user_session.token
+            if self._needs_token(decision["tool"]):
+                params["token"] = user_session.token
             
             logger.info(f"🎬 [行動] {decision['tool']} 実行開始")
             logger.info(f"🎬 [行動] パラメータ: {params}")
@@ -255,19 +538,54 @@ class TrueReactAgent:
             logger.error(f"❌ [行動] エラー詳細: {type(e).__name__}")
             return {"success": False, "error": str(e)}
     
-    async def _generate_completion_report(self, user_request: str) -> str:
+    def _needs_token(self, tool_name: str) -> bool:
         """
-        完了報告を生成する（LLMによる最終結果整形）
+        ツールがtokenパラメータを必要とするかどうかを判定
+        
+        Args:
+            tool_name: ツール名
+            
+        Returns:
+            tokenが必要かどうか
+        """
+        # DB MCPツール（認証が必要）
+        db_tools = [
+            "inventory_add", "inventory_list", "inventory_get", 
+            "inventory_update_by_id", "inventory_delete_by_id",
+            "inventory_delete_by_name", "inventory_update_by_name",
+            "inventory_update_by_name_oldest", "inventory_update_by_name_latest",
+            "inventory_delete_by_name_oldest", "inventory_delete_by_name_latest",
+            "recipes_add", "recipes_list", "recipes_update_latest", "recipes_delete_latest"
+        ]
+        
+        # Recipe MCPツール（認証不要）
+        recipe_tools = [
+            "generate_menu_plan_with_history", "search_recipe_from_rag", "search_recipe_from_web"
+        ]
+        
+        if tool_name in db_tools:
+            return True
+        elif tool_name in recipe_tools:
+            return False
+        else:
+            # 不明なツールは安全のためtokenを追加
+            logger.warning(f"⚠️ [認証判定] 不明なツール: {tool_name} - tokenを追加")
+            return True
+    
+    async def _generate_completion_report(self, user_request: str, completed_tasks: Dict[str, Any]) -> str:
+        """
+        完了報告を生成する（LLMによる最終結果整形）（Phase B: データフロー対応）
         
         Args:
             user_request: 元のユーザー要求
+            completed_tasks: 完了したタスクの結果
             
         Returns:
             完了報告
         """
         try:
-            # 1. 完了したタスクの実行結果を収集
-            task_results = self._collect_task_results()
+            # 1. 完了したタスクの実行結果を収集（Phase B: completed_tasksから直接取得）
+            task_results = self._collect_task_results_from_completed(completed_tasks)
             
             # 2. LLMに最終結果の整形を依頼
             final_response = await self._generate_final_response_with_llm(
@@ -281,6 +599,39 @@ class TrueReactAgent:
             logger.error(f"❌ [完了報告] エラー: {str(e)}")
             # フォールバック: 従来の報告方式
             return self._generate_fallback_report(user_request)
+    
+    def _collect_task_results_from_completed(self, completed_tasks: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Phase B: 完了したタスクの実行結果を収集する（completed_tasksから直接取得）
+        
+        Args:
+            completed_tasks: 完了したタスクの結果
+            
+        Returns:
+            タスク結果のリスト
+        """
+        results = []
+        
+        logger.info(f"📊 [結果収集] {len(completed_tasks)}個のタスク結果を収集")
+        
+        for task_id, result in completed_tasks.items():
+            # タスク情報を取得
+            task_info = self.task_manager.get_task_by_id(task_id)
+            
+            if task_info:
+                # resultの構造: {"success": True, "result": {...}}
+                task_result = {
+                    "tool": task_info.tool,
+                    "description": task_info.description,
+                    "result": result.get("result", {}),
+                    "status": "completed" if result.get("success") else "failed"
+                }
+                results.append(task_result)
+                logger.info(f"📊 [結果収集] {task_id}: {task_info.tool} - {result.get('success', False)}")
+            else:
+                logger.warning(f"⚠️ [結果収集] タスク情報が見つかりません: {task_id}")
+        
+        return results
     
     def _collect_task_results(self) -> List[Dict[str, Any]]:
         """
