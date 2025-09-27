@@ -88,7 +88,7 @@ class TrueReactAgent:
                     # 単一タスクの場合は従来通り実行
                     task_id = task_group[0]
                     current_task = next((t for t in tasks if t.id == task_id), None)
-                    if not current_task:
+                if not current_task:
                         logger.warning(f"⚠️ [真のReAct] タスク {task_id} が見つかりません")
                         continue
                     
@@ -97,14 +97,14 @@ class TrueReactAgent:
                         logger.warning(f"⚠️ [真のReAct] タスク {task_id} の依存関係が満たされていません")
                         continue
                 
-                    # タスクを実行中にマーク
-                    self.task_manager.mark_task_in_progress(current_task)
+                # タスクを実行中にマーク
+                self.task_manager.mark_task_in_progress(current_task)
                 
                     # ReActステップを実行（Phase B: データフロー対応）
                     result = await self._react_step(current_task, user_session, completed_tasks)
                 
-                    if result.get("success"):
-                        self.task_manager.mark_task_completed(current_task, result)
+                if result.get("success"):
+                    self.task_manager.mark_task_completed(current_task, result)
                         completed_tasks[task_id] = result
                         logger.info(f"✅ [真のReAct] タスク {task_id} 完了")
                     else:
@@ -598,7 +598,7 @@ class TrueReactAgent:
             # トークンを追加（tokenが必要なツールのみ）
             params = decision["parameters"].copy()
             if self._needs_token(decision["tool"]):
-               params["token"] = user_session.token
+            params["token"] = user_session.token
             
             logger.info(f"🎬 [行動] {decision['tool']} 実行開始")
             logger.info(f"🎬 [行動] パラメータ: {params}")
