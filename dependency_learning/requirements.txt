@@ -1,0 +1,2 @@
+pytest>=7.0.0
+asyncio-mqtt>=0.13.0
