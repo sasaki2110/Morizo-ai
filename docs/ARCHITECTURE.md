@@ -89,13 +89,25 @@ Morizo AIは、音声認識と自然言語処理を活用したスマートパ�
 - **動的ツール選択**: MCPから動的に取得したツールリストから適切なツールを選択
 - **疎結合**: 各MCPの内部実装に依存しない
 
+**🚀 新機能（2025/9/27完成）**:
+- **依存関係解決**: タスクの実行順序を自動決定
+- **データフロー**: 前のタスクの結果を次のタスクに動的に注入
+- **並列実行**: 依存関係を満たしたタスクを同時実行（asyncio.gather使用）
+- **エラーハンドリング**: 並列実行失敗時の個別実行フォールバック
+
 **処理フロー**:
 ```
 ユーザーリクエスト
     ↓
-ActionPlanner（タスク分解）
+ActionPlanner（タスク分解 + 依存関係生成）
     ↓
-TaskManager（タスク実行）
+TrueReactAgent（依存関係解決 + 並列実行グループ化）
+    ↓
+並列実行グループ1（asyncio.gather）
+    ↓
+並列実行グループ2（asyncio.gather）
+    ↓
+データフロー注入（前のタスク結果を次のタスクに注入）
     ↓
 MCP Client（ツール呼び出し）
     ↓
@@ -109,6 +121,7 @@ DB MCP Server（データベース操作）
 - LLM判断による責任分離
 - 動的なレスポンス生成
 - MCPの内部実装に依存しない設計
+- **真のAIエージェント**: 複雑なタスクを効率的に処理
 
 ### 2. ActionPlanner（タスク分解）
 **役割**: ユーザーリクエストを実行可能なタスクに分解
@@ -119,12 +132,14 @@ DB MCP Server（データベース操作）
 - JSON形式でのタスク出力
 - Perplexity API統合によるWeb検索機能
 - シンプルメッセージの判定
+- **🚀 新機能**: タスクIDと依存関係の生成
 
 **出力例**:
 ```json
 {
   "tasks": [
     {
+      "id": "task1",
       "description": "牛乳を在庫に追加する",
       "tool": "inventory_add",
       "parameters": {
@@ -135,6 +150,18 @@ DB MCP Server（データベース操作）
       },
       "priority": 1,
       "dependencies": []
+    },
+    {
+      "id": "task2",
+      "description": "在庫から献立を生成する",
+      "tool": "generate_menu_plan_with_history",
+      "parameters": {
+        "inventory_items": [],
+        "excluded_recipes": [],
+        "menu_type": "和食"
+      },
+      "priority": 2,
+      "dependencies": ["task1"]
     }
   ]
 }
@@ -148,6 +175,7 @@ DB MCP Server（データベース操作）
 - 優先度に基づく実行順序
 - エラーハンドリングとリトライ
 - 実行結果の収集
+- **🚀 新機能**: タスクIDによる検索と状態管理
 
 ### 4. MCP Client（複数サーバー対応ツール通信）
 **役割**: 複数のマイクロエージェント間の**疎結合な通信**を実現
