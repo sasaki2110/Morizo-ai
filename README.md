@@ -9,43 +9,41 @@ Smart Pantry MVPのAIエージェント（LLM処理 + 音声認識）
 - **Morizo-web** - Next.js Webアプリ（別リポジトリ）
 - **Morizo-mobile** - Expo モバイルアプリ（別リポジトリ）
 
-## 📁 フォルダ構成（リファクタリング後）
+## 📁 フォルダ構成（最適化後）
 
 ```
-Morizo AI/
-├── main.py                           # メインアプリケーション（145行）
-├── session_manager.py                 # セッション管理
-├── true_react_agent.py               # 真のReActエージェント
-├── action_planner.py                  # 行動計画立案
-├── task_manager.py                    # タスク管理
-├── db_mcp_server_stdio.py            # MCPサーバー
-├── config/                           # 設定管理
-│   ├── __init__.py
-│   ├── logging_config.py             # ログ設定・ローテーション
-│   └── cors_config.py                 # CORS設定
-├── auth/                             # 認証・セキュリティ
-│   ├── __init__.py
-│   └── authentication.py             # Supabase認証
-├── agents/                           # エージェント・MCP
-│   ├── __init__.py
-│   └── mcp_client.py                  # MCPクライアント
-├── models/                           # データモデル
-│   ├── __init__.py
-│   └── requests.py                    # Pydanticモデル
-├── utils/                            # ユーティリティ
-│   ├── __init__.py
-│   ├── session_utils.py               # セッション管理
-│   └── llm_utils.py                   # LLM処理
-├── handlers/                         # ハンドラー
-│   ├── __init__.py
-│   ├── chat_handler.py                # チャット処理
-│   └── session_handler.py             # セッション管理
-├── tests/                            # テスト
-│   └── test_true_react_agent_short.py # 真のReActエージェントテスト
-├── docs/                             # ドキュメント
-├── backups/                          # バックアップファイル
-└── requirements.txt                  # 依存関係
+/app/Morizo-ai/
+├── morizo_ai.log            # 📊 現在の作業ログ
+├── PRIORITY_TASK.md         # 🎯 最優先課題
+├── LOG_SUMMARY.md          # 📋 ログ要約
+├── AGENTS.md               # 🤝 協働ルール
+├── README.md               # 📖 プロジェクト概要
+├── main.py                 # メインアプリケーション
+├── true_react_agent.py     # 真のReActエージェント
+├── action_planner.py       # 行動計画立案
+├── task_manager.py         # タスク管理
+├── config/                 # 設定管理
+├── auth/                   # 認証・セキュリティ
+├── agents/                 # エージェント・MCP
+├── models/                 # データモデル
+├── utils/                  # ユーティリティ
+├── handlers/               # ハンドラー
+├── tests/                  # テスト
+└── docs/
+    ├── PHASE44_CONFIRMATION_PLAN.md  # 現在の作業
+    ├── reference/           # 参考情報（必要時のみ）
+    │   ├── ARCHITECTURE.md
+    │   ├── ROADMAP.md
+    │   └── DEPENDENCY_LEARNING_PLAN.md
+    └── archive/            # アーカイブ
+        └── morizo_ai.log.1  # 過去ログ
 ```
+
+### 📋 ドキュメント優先順位
+1. **PRIORITY_TASK.md** - 最優先課題（常に参照）
+2. **LOG_SUMMARY.md** - ログ要約（10行程度）
+3. **AGENTS.md** - 協働ルール（最重要）
+4. **docs/reference/** - 参考情報（必要時のみ）
 
 ## 機能
 
