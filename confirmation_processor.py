@@ -50,6 +50,10 @@ class ConfirmationProcessor:
         for suggestion in suggestions:
             response += f"- {suggestion['description']}\n"
         
+        # 使用方法の説明を追加
+        response += "\n💡 使用方法: 上記の選択肢から一つを選んで、同じメッセージでお答えください。\n"
+        response += "例: 「古いのを削除」「新しいのを削除」「全部削除」「キャンセル」"
+        
         # 辞書形式で返す
         return {
             "response": response,
@@ -184,8 +188,14 @@ class ConfirmationProcessor:
             logger.error(f"❌ [確認プロセス] コンテキスト内容: {context}")
             raise ValueError("Invalid confirmation context")
         
-        # 自然言語での選択処理
-        if any(word in user_input for word in ["古い", "最古", "oldest"]):
+        logger.info(f"🔍 [確認プロセス] ユーザー選択を解析: '{user_input}' for {item_name}")
+        
+        # 自然言語での選択処理（改善版）
+        user_input_lower = user_input.lower()
+        
+        # 古い/最古の選択
+        if any(word in user_input_lower for word in ["古い", "最古", "oldest", "古いの", "古い方"]):
+            logger.info(f"✅ [確認プロセス] 最古選択を検出: {user_input}")
             if "delete" in original_task.tool:
                 return Task(
                     id=f"{original_task.id}_oldest",
@@ -201,7 +211,9 @@ class ConfirmationProcessor:
                     description=f"最古の{item_name}を更新"
                 )
         
-        elif any(word in user_input for word in ["新しい", "最新", "latest"]):
+        # 新しい/最新の選択（改善版）
+        elif any(word in user_input_lower for word in ["新しい", "最新", "latest", "新しいの", "新しい方", "新しく"]):
+            logger.info(f"✅ [確認プロセス] 最新選択を検出: {user_input}")
             if "delete" in original_task.tool:
                 return Task(
                     id=f"{original_task.id}_latest",
@@ -241,12 +253,13 @@ class ConfirmationProcessor:
         """不明な選択肢の処理"""
         logger.warning(f"⚠️ [確認プロセス] 不明な選択肢を処理: {user_input}")
         
-        # デフォルトの選択肢を提案
+        # より親切なエラーメッセージ
+        item_name = context.get("item_name", "アイテム")
         return Task(
             id="clarify_choice",
             tool="clarify_confirmation",
             parameters={
-                "message": f"選択肢が分からないようです。'{user_input}' は理解できませんでした。\n\n以下のいずれかでお答えください：\n- 古いアイテムを操作\n- 新しいアイテムを操作\n- 全部操作\n- キャンセル",
+                "message": f"申し訳ありません。「{user_input}」という選択肢は理解できませんでした。\n\n{item_name}の操作について、以下のいずれかでお答えください：\n- 古い{item_name}を操作\n- 新しい{item_name}を操作\n- 全部操作\n- キャンセル\n\n例: 「古いのを削除」「新しいのを削除」など",
                 "original_context": context,
                 "user_input": user_input
             },

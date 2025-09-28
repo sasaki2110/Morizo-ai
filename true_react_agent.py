@@ -1144,20 +1144,67 @@ class TrueReactAgent:
         try:
             # 実行結果をまとめる
             results_summary = []
+            detailed_results = []
+            
             for task_id, result in completed_tasks.items():
+                logger.info(f"🔍 [デバッグ] タスク結果構造: {task_id}")
+                logger.info(f"🔍 [デバッグ] result構造: {type(result)} - {result}")
+                
                 if isinstance(result, dict) and result.get("success"):
-                    results_summary.append(f"✅ {result.get('message', '処理完了')}")
+                    message = result.get('message', '処理完了')
+                    # 具体的な結果がある場合は詳細を表示
+                    if 'data' in result and result['data']:
+                        logger.info(f"🔍 [デバッグ] dataフィールド発見: {result['data']}")
+                        detailed_results.append(result['data'])
+                    elif 'response' in result and result['response']:
+                        logger.info(f"🔍 [デバッグ] responseフィールド発見: {result['response']}")
+                        detailed_results.append(result['response'])
+                    elif 'result' in result and result['result']:
+                        # MCPツールの結果をチェック
+                        mcp_result = result['result']
+                        logger.info(f"🔍 [デバッグ] MCP結果構造: {type(mcp_result)} - {mcp_result}")
+                        if isinstance(mcp_result, dict):
+                            # MCPツールの結果からdataフィールドを抽出
+                            if 'data' in mcp_result:
+                                logger.info(f"🔍 [デバッグ] MCP dataフィールド発見: {mcp_result['data']}")
+                                detailed_results.append(mcp_result['data'])
+                            elif 'recipes' in mcp_result:
+                                logger.info(f"🔍 [デバッグ] MCP recipesフィールド発見: {mcp_result['recipes']}")
+                                detailed_results.append(mcp_result)
+                            elif 'menu' in mcp_result:
+                                logger.info(f"🔍 [デバッグ] MCP menuフィールド発見: {mcp_result['menu']}")
+                                detailed_results.append(mcp_result)
+                            else:
+                                # その他の構造の場合は文字列化
+                                logger.info(f"🔍 [デバッグ] MCP結果を文字列化: {str(mcp_result)}")
+                                detailed_results.append(str(mcp_result))
+                        elif isinstance(mcp_result, str):
+                            logger.info(f"🔍 [デバッグ] MCP結果文字列: {mcp_result}")
+                            detailed_results.append(mcp_result)
+                    else:
+                        logger.info(f"🔍 [デバッグ] 汎用メッセージを使用: {message}")
+                        results_summary.append(f"✅ {message}")
                 else:
+                    logger.info(f"🔍 [デバッグ] タスク失敗: {task_id}")
                     results_summary.append(f"⚠️ {task_id}: 処理に問題がありました")
             
             # 最終応答を生成
+            final_response = ""
+            
+            # 詳細な結果がある場合はそれを優先表示
+            if detailed_results:
+                for detail in detailed_results:
+                    if isinstance(detail, str) and len(detail.strip()) > 0:
+                        final_response += detail + "\n\n"
+            
+            # 処理完了のサマリーを追加
             if results_summary:
-                final_response = "処理が完了しました。\n\n"
+                final_response += "処理が完了しました。\n\n"
                 final_response += "\n".join(results_summary)
             else:
-                final_response = "処理が完了しました。"
+                final_response += "処理が完了しました。"
             
-            return final_response
+            return final_response.strip()
             
         except Exception as e:
             logger.error(f"❌ [真のReAct] 最終応答生成エラー: {str(e)}")

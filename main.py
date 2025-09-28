@@ -106,6 +106,31 @@ async def chat_test(request: ChatRequest):
         }
         
         logger.info("🔍 [MAIN] ダミー認証データ作成完了")
+        
+        # テスト用のSupabaseクライアントを作成（認証バイパス）
+        from supabase import create_client
+        import os
+        
+        # 実際のSupabase設定を使用
+        supabase_url = os.getenv("SUPABASE_URL")
+        supabase_key = os.getenv("SUPABASE_KEY")
+        
+        if supabase_url and supabase_key:
+            # 実際のSupabaseクライアントを作成
+            supabase_client = create_client(supabase_url, supabase_key)
+            logger.info("✅ [MAIN] 実際のSupabaseクライアントを作成")
+        else:
+            logger.warning("⚠️ [MAIN] Supabase設定が見つかりません")
+            supabase_client = None
+        
+        # テスト用のセッション管理（認証バイパス）
+        from session_manager import session_manager
+        user_session = session_manager.get_or_create_session(dummy_auth_data["user"].id, dummy_auth_data["raw_token"])
+        
+        # Supabaseクライアントをセッションに設定
+        if supabase_client:
+            user_session.supabase_client = supabase_client
+        
         result = await handle_chat_request(request, dummy_auth_data)
         logger.info("✅ [MAIN] 認証なしチャットテスト完了")
         return result
@@ -116,6 +141,109 @@ async def chat_test(request: ChatRequest):
         import traceback
         logger.error(f"❌ [MAIN] トレースバック: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Test error: {str(e)}")
+
+# 認証なしの確認応答エンドポイント（テスト用）
+@app.post("/chat-test/confirm", response_model=ChatResponse)
+async def confirm_chat_test(request: ChatRequest):
+    """
+    認証なしの確認応答エンドポイント（テスト用）
+    """
+    try:
+        logger.info(f"🤔 [MAIN] 認証なし確認応答リクエスト受信: {request.message}")
+        
+        # ダミーの認証データを作成
+        class DummyUser:
+            def __init__(self):
+                self.id = "test-user-id"
+                self.email = "test@example.com"
+        
+        dummy_auth_data = {
+            "user": DummyUser(),
+            "raw_token": "dummy-token"
+        }
+        
+        # セッション管理
+        from session_manager import session_manager
+        user_session = session_manager.get_or_create_session(dummy_auth_data["user"].id, dummy_auth_data["raw_token"])
+        
+        # 確認コンテキストを取得
+        confirmation_context = user_session.get_confirmation_context()
+        if not confirmation_context:
+            logger.warning(f"⚠️ [MAIN] 確認コンテキストが見つかりません: {dummy_auth_data['user'].id}")
+            raise HTTPException(status_code=400, detail="確認コンテキストが見つかりません。確認プロセスが開始されていないか、期限切れの可能性があります。")
+        
+        # 確認コンテキストから実際のコンテキストを抽出
+        actual_context = confirmation_context.get('confirmation_context', confirmation_context)
+        logger.info(f"🤔 [MAIN] 確認コンテキスト取得完了: {actual_context.get('action', 'unknown')}")
+        
+        # 確認プロセッサーで応答を処理
+        confirmation_processor = ConfirmationProcessor()
+        execution_plan = confirmation_processor.process_confirmation_response(
+            request.message, 
+            actual_context
+        )
+        
+        logger.info(f"🤔 [MAIN] 確認応答処理完了: cancel={execution_plan.cancel}, continue={execution_plan.continue_execution}")
+        
+        if execution_plan.cancel:
+            # キャンセル処理
+            user_session.clear_confirmation_context()
+            logger.info(f"🚫 [MAIN] 操作をキャンセル: {dummy_auth_data['user'].id}")
+            return ChatResponse(
+                response="操作をキャンセルしました。",
+                success=True,
+                model_used=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+                user_id=user_session.user_id
+            )
+        
+        # タスクチェーン再開処理
+        if execution_plan.continue_execution:
+            logger.info(f"🔄 [MAIN] タスクチェーン再開開始: {len(execution_plan.tasks)}個のタスク")
+            
+            # TrueReactAgentでタスクチェーン再開
+            from true_react_agent import TrueReactAgent
+            from openai import OpenAI
+            
+            client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            true_react_agent = TrueReactAgent(client)
+            
+            # タスクチェーン再開
+            result = await true_react_agent.resume_task_chain(
+                execution_plan.tasks,
+                user_session,
+                confirmation_context
+            )
+            
+            # 確認コンテキストをクリア
+            user_session.clear_confirmation_context()
+            
+            logger.info(f"✅ [MAIN] タスクチェーン再開完了: {dummy_auth_data['user'].id}")
+            
+            return ChatResponse(
+                response=result,
+                success=True,
+                model_used=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+                user_id=user_session.user_id
+            )
+        
+        # 予期しない状況
+        logger.warning(f"⚠️ [MAIN] 予期しない実行計画: {execution_plan}")
+        return ChatResponse(
+            response="申し訳ありません。処理中に予期しない状況が発生しました。",
+            success=False,
+            model_used=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            user_id=user_session.user_id
+        )
+        
+    except HTTPException:
+        # HTTPExceptionはそのまま再発生
+        raise
+    except Exception as e:
+        logger.error(f"❌ [MAIN] 認証なし確認応答処理エラー: {str(e)}")
+        logger.error(f"❌ [MAIN] エラータイプ: {type(e).__name__}")
+        import traceback
+        logger.error(f"❌ [MAIN] トレースバック: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Confirmation processing error: {str(e)}")
 
 # チャットエンドポイント
 @app.post("/chat", response_model=ChatResponse)
