@@ -15,6 +15,10 @@ from typing import List, Dict, Any, Optional
 from action_planner import ActionPlanner, Task
 from task_manager import TaskManager
 from openai import OpenAI
+from ambiguity_detector import AmbiguityDetector
+from confirmation_processor import ConfirmationProcessor
+from confirmation_exceptions import UserConfirmationRequired
+from task_chain_manager import TaskChainManager
 
 logger = logging.getLogger("morizo_ai.true_react")
 
@@ -35,6 +39,11 @@ class TrueReactAgent:
         self.planner = ActionPlanner(openai_client)
         self.task_manager = TaskManager()
         self.max_react_cycles = 10  # 最大ReActサイクル数
+        
+        # Phase 4.4: 確認プロセス用のコンポーネント
+        self.ambiguity_detector = AmbiguityDetector()
+        self.confirmation_processor = ConfirmationProcessor()
+        self.task_chain_manager = TaskChainManager()
     
     async def process_request(self, user_request: str, user_session, available_tools: List[str]) -> str:
         """
@@ -68,6 +77,9 @@ class TrueReactAgent:
             
             # Phase 2: タスク管理に追加
             self.task_manager.add_tasks(tasks)
+            
+            # Phase 4.4: タスクチェーン管理を初期化
+            self.task_chain_manager.set_task_chain(tasks)
             
             logger.info(f"🤖 [真のReAct] {len(tasks)}個のタスクを生成")
             
@@ -118,6 +130,10 @@ class TrueReactAgent:
             # Phase 4: 完了報告
             return await self._generate_completion_report(user_request, completed_tasks)
             
+        except UserConfirmationRequired as e:
+            # Phase 4.4: ユーザー確認が必要な場合は例外を再発生
+            logger.info(f"🤔 [確認プロセス] ユーザー確認が必要: {user_request}")
+            raise e
         except Exception as e:
             logger.error(f"❌ [真のReAct] 処理エラー: {str(e)}")
             return f"申し訳ありません。処理中にエラーが発生しました: {str(e)}"
@@ -458,7 +474,7 @@ class TrueReactAgent:
     
     async def _react_step(self, task: Task, user_session, completed_tasks: Dict[str, Any] = None) -> Dict[str, Any]:
         """
-        単一のReActステップを実行する（Phase B: データフロー対応）
+        単一のReActステップを実行する（Phase B: データフロー対応 + Phase 4.4: 確認プロセス）
         
         Args:
             task: 実行するタスク
@@ -474,6 +490,17 @@ class TrueReactAgent:
             # Phase B: データフロー - 依存タスクの結果をパラメータに注入
             enhanced_task = self._inject_dependency_results(task, completed_tasks or {})
             
+            # Phase 4.4: 曖昧性検出（在庫操作タスクの場合）
+            if self._is_inventory_operation_task(enhanced_task):
+                try:
+                    await self._check_ambiguity_and_confirm(enhanced_task, user_session)
+                except UserConfirmationRequired as e:
+                    # 確認が必要な場合は例外を再発生
+                    raise e
+                except Exception as e:
+                    # その他のエラーはログに記録して続行
+                    logger.warning(f"⚠️ [曖昧性チェック] エラーを無視して続行: {str(e)}")
+            
             # 観察: 現在の状況を把握
             observation = await self._observe(enhanced_task, user_session)
             
@@ -488,6 +515,10 @@ class TrueReactAgent:
             
             return action_result
             
+        except UserConfirmationRequired as e:
+            # Phase 4.4: 確認が必要な場合は例外を再発生
+            logger.info(f"🤔 [確認プロセス] ユーザー確認が必要: {enhanced_task.description}")
+            raise e
         except Exception as e:
             logger.error(f"❌ [ReAct] ステップエラー: {str(e)}")
             return {"success": False, "error": str(e)}
@@ -877,3 +908,78 @@ class TrueReactAgent:
         except Exception as e:
             logger.error(f"❌ [シンプル応答] エラー: {str(e)}")
             return "こんにちは！何かお手伝いできることがあれば教えてください。"
+    
+    def _is_inventory_operation_task(self, task: Task) -> bool:
+        """
+        在庫操作タスクかどうかを判定する
+        
+        Args:
+            task: 判定するタスク
+            
+        Returns:
+            在庫操作タスクかどうか
+        """
+        inventory_tools = [
+            "inventory_delete_by_name", "inventory_update_by_name",
+            "inventory_delete_by_name_oldest", "inventory_delete_by_name_latest",
+            "inventory_update_by_name_oldest", "inventory_update_by_name_latest"
+        ]
+        return task.tool in inventory_tools
+    
+    async def _check_ambiguity_and_confirm(self, task: Task, user_session) -> None:
+        """
+        曖昧性をチェックし、必要に応じて確認を求める
+        
+        Args:
+            task: チェックするタスク
+            user_session: ユーザーセッション
+            
+        Raises:
+            UserConfirmationRequired: 確認が必要な場合
+        """
+        try:
+            # 在庫リストを取得して曖昧性をチェック
+            from agents.mcp_client import call_mcp_tool
+            
+            # 在庫リストを取得
+            inventory_result = await call_mcp_tool("inventory_list", {"token": user_session.token})
+            
+            if not inventory_result.get("success"):
+                logger.warning(f"⚠️ [曖昧性チェック] 在庫リスト取得失敗: {inventory_result.get('error')}")
+                return
+            
+            # 在庫データを抽出
+            inventory_data = inventory_result.get("result", {}).get("data", [])
+            
+            # 曖昧性検出
+            ambiguity_info = self.ambiguity_detector.detect_ambiguity(task, inventory_data)
+            
+            if ambiguity_info and ambiguity_info.needs_confirmation:
+                logger.info(f"🤔 [曖昧性検出] 確認が必要: {task.description}")
+                
+                # 残りのタスクチェーンを取得
+                remaining_tasks = self.task_chain_manager.get_remaining_tasks()
+                
+                # 確認レスポンスを生成
+                confirmation_response = self.confirmation_processor.generate_confirmation_response(
+                    ambiguity_info, remaining_tasks
+                )
+                
+                # 実行済みタスクを取得
+                executed_tasks = self.task_chain_manager.get_executed_tasks()
+                
+                # UserConfirmationRequired例外を発生
+                raise UserConfirmationRequired(
+                    confirmation_context=confirmation_response,
+                    executed_tasks=executed_tasks,
+                    remaining_tasks=remaining_tasks
+                )
+            else:
+                logger.info(f"✅ [曖昧性チェック] 確認不要: {task.description}")
+                
+        except UserConfirmationRequired:
+            # 既に発生した例外は再発生
+            raise
+        except Exception as e:
+            logger.error(f"❌ [曖昧性チェック] エラー: {str(e)}")
+            # エラーの場合は確認をスキップして続行

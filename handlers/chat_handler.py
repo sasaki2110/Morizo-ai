@@ -9,6 +9,7 @@ from auth.authentication import verify_token
 from session_manager import session_manager
 from agents.mcp_client import get_available_tools_from_mcp
 from true_react_agent import TrueReactAgent
+from confirmation_exceptions import UserConfirmationRequired
 from openai import OpenAI
 import os
 
@@ -45,6 +46,22 @@ async def process_with_unified_react(request: ChatRequest, user_session, raw_tok
             success=True,
             model_used=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
             user_id=user_session.user_id
+        )
+        
+    except UserConfirmationRequired as e:
+        # Phase 4.4: ユーザー確認が必要な場合の処理
+        logger.info(f"🤔 [確認プロセス] ユーザー確認が必要: {request.message}")
+        
+        # 確認レスポンスを生成
+        confirmation_response = e.confirmation_context
+        
+        return ChatResponse(
+            response=confirmation_response["response"],
+            success=True,
+            model_used=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            user_id=user_session.user_id,
+            confirmation_required=True,
+            confirmation_context=confirmation_response
         )
         
     except Exception as e:

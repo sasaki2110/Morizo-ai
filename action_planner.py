@@ -43,6 +43,19 @@ class Task:
             self.dependencies = []
         if self.result is None:
             self.result = {}
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Taskオブジェクトを辞書に変換"""
+        return {
+            "id": self.id,
+            "description": self.description,
+            "tool": self.tool,
+            "parameters": self.parameters,
+            "status": self.status,
+            "priority": self.priority,
+            "dependencies": self.dependencies,
+            "result": self.result
+        }
 
 class ActionPlanner:
     """行動計画立案クラス"""
@@ -84,13 +97,26 @@ class ActionPlanner:
    - 例: "調子はどう？", "元気？", "今日はいい天気ですね"
 
 2. **在庫管理に関連するユーザー指示の確認**: 適切なツールを選択
+   - **ユーザー指定（古い方）**: ユーザー要求に「古い方の」「古い」「最初の」キーワードがあるか確認
+   - 古い方を指示するキーワードがあれば、最古アイテムを更新/削除。
+
    - **ユーザー指定（最新）**: ユーザー要求に「最新の」「新しい方の」「最近買った」キーワードがあるか確認
    - 最新を指示するキーワードがあれば、最新アイテムを更新/削除。
 
    - **ユーザー指定（全て）**: ユーザー要求に「全ての」「全部の」キーワードがあるか確認
    - 全てを指示するキーワードがあれば、全アイテムを更新/削除。
 
-   - **ユーザー指定なし**: ユーザー要求に最新や全ての指定がない場合は最古アイテムを更新/削除
+   - **ユーザー指定なし**: ユーザー要求に「古い方」「最新」「全て」の指定がない場合は、必ず`inventory_delete_by_name`または`inventory_update_by_name`を使用する。`inventory_delete_by_name_latest`、`inventory_delete_by_name_oldest`、`inventory_update_by_name_latest`、`inventory_update_by_name_oldest`は使用禁止。
+
+**重要**: 「牛乳を削除して」のような曖昧な要求では、絶対に`inventory_delete_by_name_latest`や`inventory_delete_by_name_oldest`を選択してはいけません。
+
+**具体例**:
+- 「牛乳を削除して」→ `inventory_delete_by_name`（確認プロセス発動）
+- 「古い牛乳を削除して」→ `inventory_delete_by_name_oldest`（直接削除）
+- 「最新の牛乳を削除して」→ `inventory_delete_by_name_latest`（直接削除）
+- 「全ての牛乳を削除して」→ `inventory_delete_by_name`（全削除）
+
+**禁止事項**: 曖昧な要求で`inventory_delete_by_name_latest`や`inventory_delete_by_name_oldest`を選択することは絶対に禁止です。
 
 3. **タスク生成のルール**:
    - 削除・更新は必ずitem_idを指定
@@ -265,6 +291,8 @@ class ActionPlanner:
                 parameters = task_data["parameters"]
                 if "item" in parameters:
                     parameters["item_name"] = parameters.pop("item")
+                if "name" in parameters:
+                    parameters["item_name"] = parameters.pop("name")
                 
                 task = Task(
                     id=task_data.get("id", f"task_{self.task_counter}"),

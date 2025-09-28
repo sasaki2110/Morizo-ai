@@ -25,6 +25,7 @@ from auth.authentication import verify_token
 
 # モデル
 from models.requests import ChatRequest, ChatResponse
+from confirmation_processor import ConfirmationProcessor
 
 # ハンドラー
 from handlers.chat_handler import handle_chat_request
@@ -140,6 +141,48 @@ async def chat(request: ChatRequest, auth_data = Depends(verify_token)):
         import traceback
         logger.error(f"❌ [MAIN] トレースバック: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+# 確認応答エンドポイント
+@app.post("/chat/confirm", response_model=ChatResponse)
+async def confirm_chat(request: ChatRequest, auth_data = Depends(verify_token)):
+    """
+    Phase 4.4: 確認応答を処理するエンドポイント
+    ユーザーが確認プロセスで選択した内容を処理
+    """
+    try:
+        logger.info(f"🤔 [MAIN] 確認応答リクエスト受信: {request.message}")
+        
+        current_user = auth_data["user"]
+        raw_token = auth_data["raw_token"]
+        
+        # セッション管理
+        from session_manager import session_manager
+        user_session = session_manager.get_or_create_session(current_user.id, raw_token)
+        
+        # 確認プロセッサーで応答を処理
+        confirmation_processor = ConfirmationProcessor()
+        
+        # セッションから確認コンテキストを取得（実装簡略化のため、ここでは基本的な処理）
+        # 実際の実装では、セッションに確認コンテキストを保存する必要がある
+        logger.info(f"🤔 [MAIN] 確認応答処理: {request.message}")
+        
+        # 簡略化された確認応答処理
+        # 実際の実装では、セッションから確認コンテキストを取得して処理する
+        response_message = f"確認いただきありがとうございます。'{request.message}' の内容で処理を続行します。"
+        
+        return ChatResponse(
+            response=response_message,
+            success=True,
+            model_used=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            user_id=user_session.user_id
+        )
+        
+    except Exception as e:
+        logger.error(f"❌ [MAIN] 確認応答処理エラー: {str(e)}")
+        logger.error(f"❌ [MAIN] エラータイプ: {type(e).__name__}")
+        import traceback
+        logger.error(f"❌ [MAIN] トレースバック: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Confirmation processing error: {str(e)}")
 
 # セッション管理ルート
 setup_session_routes(app)

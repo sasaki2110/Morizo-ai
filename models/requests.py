@@ -3,7 +3,7 @@ Pydantic models for requests and responses
 """
 
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Dict, Any
 
 
 class ChatRequest(BaseModel):
@@ -18,3 +18,5 @@ class ChatResponse(BaseModel):
     success: bool
     model_used: str
     user_id: Optional[str] = None
+    confirmation_required: Optional[bool] = False
+    confirmation_context: Optional[Dict[str, Any]] = None
