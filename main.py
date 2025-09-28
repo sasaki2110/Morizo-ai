@@ -146,8 +146,8 @@ async def chat(request: ChatRequest, auth_data = Depends(verify_token)):
 @app.post("/chat/confirm", response_model=ChatResponse)
 async def confirm_chat(request: ChatRequest, auth_data = Depends(verify_token)):
     """
-    Phase 4.4: 確認応答を処理するエンドポイント
-    ユーザーが確認プロセスで選択した内容を処理
+    Phase 4.4.3: 確認応答を処理するエンドポイント（完全実装）
+    ユーザーが確認プロセスで選択した内容を処理し、タスクチェーンを再開
     """
     try:
         logger.info(f"🤔 [MAIN] 確認応答リクエスト受信: {request.message}")
@@ -159,24 +159,78 @@ async def confirm_chat(request: ChatRequest, auth_data = Depends(verify_token)):
         from session_manager import session_manager
         user_session = session_manager.get_or_create_session(current_user.id, raw_token)
         
+        # 確認コンテキストを取得
+        confirmation_context = user_session.get_confirmation_context()
+        if not confirmation_context:
+            logger.warning(f"⚠️ [MAIN] 確認コンテキストが見つかりません: {current_user.id}")
+            raise HTTPException(status_code=400, detail="確認コンテキストが見つかりません。確認プロセスが開始されていないか、期限切れの可能性があります。")
+        
+        # 確認コンテキストから実際のコンテキストを抽出
+        actual_context = confirmation_context.get('confirmation_context', confirmation_context)
+        logger.info(f"🤔 [MAIN] 確認コンテキスト取得完了: {actual_context.get('action', 'unknown')}")
+        
         # 確認プロセッサーで応答を処理
         confirmation_processor = ConfirmationProcessor()
+        execution_plan = confirmation_processor.process_confirmation_response(
+            request.message, 
+            actual_context
+        )
         
-        # セッションから確認コンテキストを取得（実装簡略化のため、ここでは基本的な処理）
-        # 実際の実装では、セッションに確認コンテキストを保存する必要がある
-        logger.info(f"🤔 [MAIN] 確認応答処理: {request.message}")
+        logger.info(f"🤔 [MAIN] 確認応答処理完了: cancel={execution_plan.cancel}, continue={execution_plan.continue_execution}")
         
-        # 簡略化された確認応答処理
-        # 実際の実装では、セッションから確認コンテキストを取得して処理する
-        response_message = f"確認いただきありがとうございます。'{request.message}' の内容で処理を続行します。"
+        if execution_plan.cancel:
+            # キャンセル処理
+            user_session.clear_confirmation_context()
+            logger.info(f"🚫 [MAIN] 操作をキャンセル: {current_user.id}")
+            return ChatResponse(
+                response="操作をキャンセルしました。",
+                success=True,
+                model_used=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+                user_id=user_session.user_id
+            )
         
+        # タスクチェーン再開処理
+        if execution_plan.continue_execution:
+            logger.info(f"🔄 [MAIN] タスクチェーン再開開始: {len(execution_plan.tasks)}個のタスク")
+            
+            # TrueReactAgentでタスクチェーン再開
+            from true_react_agent import TrueReactAgent
+            from openai import OpenAI
+            
+            client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            true_react_agent = TrueReactAgent(client)
+            
+            # タスクチェーン再開
+            result = await true_react_agent.resume_task_chain(
+                execution_plan.tasks,
+                user_session,
+                confirmation_context
+            )
+            
+            # 確認コンテキストをクリア
+            user_session.clear_confirmation_context()
+            
+            logger.info(f"✅ [MAIN] タスクチェーン再開完了: {current_user.id}")
+            
+            return ChatResponse(
+                response=result,
+                success=True,
+                model_used=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+                user_id=user_session.user_id
+            )
+        
+        # 予期しない状況
+        logger.warning(f"⚠️ [MAIN] 予期しない実行計画: {execution_plan}")
         return ChatResponse(
-            response=response_message,
-            success=True,
+            response="申し訳ありません。処理中に予期しない状況が発生しました。",
+            success=False,
             model_used=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
             user_id=user_session.user_id
         )
         
+    except HTTPException:
+        # HTTPExceptionはそのまま再発生
+        raise
     except Exception as e:
         logger.error(f"❌ [MAIN] 確認応答処理エラー: {str(e)}")
         logger.error(f"❌ [MAIN] エラータイプ: {type(e).__name__}")

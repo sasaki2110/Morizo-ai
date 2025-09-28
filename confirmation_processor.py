@@ -8,6 +8,10 @@ from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 from action_planner import Task
 from ambiguity_detector import AmbiguityInfo
+import logging
+
+# ログ設定
+logger = logging.getLogger('morizo_ai.confirmation')
 
 
 @dataclass
@@ -52,6 +56,7 @@ class ConfirmationProcessor:
             "confirmation_context": {
                 "action": self._get_action_from_tool(ambiguity_info.task.tool),
                 "item_name": ambiguity_info.item_name,
+                "original_task": ambiguity_info.task,
                 "remaining_task_chain": [t.to_dict() for t in remaining_tasks] if remaining_tasks else [],
                 "options": suggestions,
                 "items": ambiguity_info.items
@@ -65,16 +70,48 @@ class ConfirmationProcessor:
         if any(word in user_input for word in ["キャンセル", "やめる", "cancel"]):
             return TaskExecutionPlan(tasks=[], cancel=True)
         
-        # 現在のタスクを実行
+        # ユーザー選択に基づいて具体的なタスクを生成
         current_task = self._create_task_from_choice(user_input, context)
         
-        # 残りのタスクチェーンを取得
-        remaining_tasks = context.get("remaining_task_chain", [])
+        # 残りのタスクチェーンを取得（Taskオブジェクトに変換）
+        remaining_task_dicts = context.get("remaining_task_chain", [])
+        remaining_tasks = []
+        for task_dict in remaining_task_dicts:
+            try:
+                task = Task.from_dict(task_dict)
+                remaining_tasks.append(task)
+            except Exception as e:
+                logger.warning(f"⚠️ [確認プロセス] タスク変換エラー: {e}")
+                continue
+        
+        # 元の曖昧なタスクを除外（置換済みのため）
+        original_task = context.get("original_task")
+        if original_task:
+            remaining_tasks = self._filter_out_ambiguous_task(remaining_tasks, original_task)
+            logger.info(f"🔄 [確認プロセス] 元の曖昧なタスクを除外: {original_task.id}")
         
         return TaskExecutionPlan(
             tasks=[current_task] + remaining_tasks,
             continue_execution=True
         )
+    
+    def _filter_out_ambiguous_task(self, remaining_tasks: List[Task], original_task) -> List[Task]:
+        """元の曖昧なタスクを除外し、依存関係を修正"""
+        filtered_tasks = []
+        for task in remaining_tasks:
+            # 元のタスクと同じIDまたは同じツール・パラメータのタスクを除外
+            if (task.id == original_task.id or 
+                (task.tool == original_task.tool and task.parameters == original_task.parameters)):
+                logger.info(f"🔄 [確認プロセス] 曖昧なタスクを除外: {task.id}")
+                continue
+            
+            # 依存関係から元のタスクを除外
+            if original_task.id in task.dependencies:
+                task.dependencies = [dep for dep in task.dependencies if dep != original_task.id]
+                logger.info(f"🔄 [確認プロセス] 依存関係を修正: {task.id} - {task.dependencies}")
+            
+            filtered_tasks.append(task)
+        return filtered_tasks
     
     def _get_action_description(self, task: Task) -> str:
         """操作の説明を取得"""
@@ -143,6 +180,8 @@ class ConfirmationProcessor:
         original_task = context.get("original_task")
         
         if not item_name or not original_task:
+            logger.error(f"❌ [確認プロセス] 無効な確認コンテキスト: item_name={item_name}, original_task={original_task}")
+            logger.error(f"❌ [確認プロセス] コンテキスト内容: {context}")
             raise ValueError("Invalid confirmation context")
         
         # 自然言語での選択処理
@@ -151,14 +190,14 @@ class ConfirmationProcessor:
                 return Task(
                     id=f"{original_task.id}_oldest",
                     tool="inventory_delete_by_name_oldest",
-                    parameters={"item_name": item_name, "token": context.get("token")},
+                    parameters={"item_name": item_name},
                     description=f"最古の{item_name}を削除"
                 )
             elif "update" in original_task.tool:
                 return Task(
                     id=f"{original_task.id}_oldest",
                     tool="inventory_update_by_name_oldest",
-                    parameters={**original_task.parameters, "token": context.get("token")},
+                    parameters={**original_task.parameters},
                     description=f"最古の{item_name}を更新"
                 )
         
@@ -167,14 +206,14 @@ class ConfirmationProcessor:
                 return Task(
                     id=f"{original_task.id}_latest",
                     tool="inventory_delete_by_name_latest",
-                    parameters={"item_name": item_name, "token": context.get("token")},
+                    parameters={"item_name": item_name},
                     description=f"最新の{item_name}を削除"
                 )
             elif "update" in original_task.tool:
                 return Task(
                     id=f"{original_task.id}_latest",
                     tool="inventory_update_by_name_latest",
-                    parameters={**original_task.parameters, "token": context.get("token")},
+                    parameters={**original_task.parameters},
                     description=f"最新の{item_name}を更新"
                 )
         
@@ -182,7 +221,7 @@ class ConfirmationProcessor:
             return Task(
                 id=f"{original_task.id}_all",
                 tool=original_task.tool,
-                parameters={**original_task.parameters, "token": context.get("token")},
+                parameters={**original_task.parameters},
                 description=f"全ての{item_name}を{self._get_action_description(original_task)}"
             )
         
@@ -190,14 +229,26 @@ class ConfirmationProcessor:
             return Task(
                 id=f"{original_task.id}_confirm",
                 tool=original_task.tool,
-                parameters={**original_task.parameters, "token": context.get("token")},
+                parameters={**original_task.parameters},
                 description=original_task.description
             )
         
-        # 不明な選択の場合は元のタスクを返す
+        # 不明な選択の場合は明確化を求める
+        logger.warning(f"⚠️ [確認プロセス] 不明な選択肢: {user_input}")
+        return self._handle_unknown_choice(user_input, context)
+    
+    def _handle_unknown_choice(self, user_input: str, context: dict) -> Task:
+        """不明な選択肢の処理"""
+        logger.warning(f"⚠️ [確認プロセス] 不明な選択肢を処理: {user_input}")
+        
+        # デフォルトの選択肢を提案
         return Task(
-            id=f"{original_task.id}_unknown",
-            tool=original_task.tool,
-            parameters={**original_task.parameters, "token": context.get("token")},
-            description=original_task.description
+            id="clarify_choice",
+            tool="clarify_confirmation",
+            parameters={
+                "message": f"選択肢が分からないようです。'{user_input}' は理解できませんでした。\n\n以下のいずれかでお答えください：\n- 古いアイテムを操作\n- 新しいアイテムを操作\n- 全部操作\n- キャンセル",
+                "original_context": context,
+                "user_input": user_input
+            },
+            description="選択肢の明確化"
         )

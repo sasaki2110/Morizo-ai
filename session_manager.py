@@ -45,6 +45,13 @@ class SessionContext:
         # 保留中の確認
         self.pending_confirmation = None
         
+        # Phase 4.4.3: 確認プロセス用の拡張
+        self.pending_confirmation_context = None  # 保留中の確認コンテキスト
+        self.task_chain_state = None  # タスクチェーンの状態
+        self.executed_tasks = []  # 実行済みタスク
+        self.remaining_tasks = []  # 残りタスク
+        self.confirmation_timeout = 300  # 確認タイムアウト（5分）
+        
         
     def add_operation(self, operation_type: str, details: Dict[str, Any]):
         """操作履歴を追加（最大10件制限）"""
@@ -88,6 +95,45 @@ class SessionContext:
         """会話コンテキストをクリア"""
         self.conversation_context = []
         print(f"💬 ユーザー {self.user_id} の会話コンテキストをクリアしました")
+        
+    # Phase 4.4.3: 確認プロセス管理メソッド
+    def save_confirmation_context(self, confirmation_context: dict):
+        """確認コンテキストを保存"""
+        self.pending_confirmation_context = confirmation_context
+        self.last_activity = datetime.now()
+        logger.info(f"💾 [セッション] 確認コンテキストを保存: {self.user_id}")
+        
+    def get_confirmation_context(self) -> Optional[dict]:
+        """確認コンテキストを取得"""
+        return self.pending_confirmation_context
+        
+    def clear_confirmation_context(self):
+        """確認コンテキストをクリア"""
+        self.pending_confirmation_context = None
+        self.task_chain_state = None
+        self.executed_tasks = []
+        self.remaining_tasks = []
+        logger.info(f"🧹 [セッション] 確認コンテキストをクリア: {self.user_id}")
+        
+    def is_confirmation_context_valid(self) -> bool:
+        """確認コンテキストが有効かチェック"""
+        if not self.pending_confirmation_context:
+            return False
+        
+        # 確認コンテキストのタイムアウトチェック
+        time_diff = datetime.now() - self.last_activity
+        return time_diff.total_seconds() < self.confirmation_timeout
+        
+    def save_task_chain_state(self, executed_tasks: List[Any], remaining_tasks: List[Any]):
+        """タスクチェーン状態を保存"""
+        self.executed_tasks = executed_tasks.copy()
+        self.remaining_tasks = remaining_tasks.copy()
+        self.task_chain_state = {
+            "executed_count": len(executed_tasks),
+            "remaining_count": len(remaining_tasks),
+            "timestamp": datetime.now().isoformat()
+        }
+        logger.info(f"📊 [セッション] タスクチェーン状態を保存: 実行済み{len(executed_tasks)}件, 残り{len(remaining_tasks)}件")
         
         
         
@@ -160,6 +206,9 @@ class SessionManager:
         if expired_users:
             print(f"🕐 {len(expired_users)}件の期限切れセッションをクリアしました")
             
+        # Phase 4.4.3: 期限切れの確認コンテキストもクリア
+        self.clear_expired_confirmation_contexts()
+            
     def clear_old_history(self, user_id: str):
         """古い履歴をクリア（方法C: 操作履歴の制限）"""
         if user_id in self.active_sessions:
@@ -202,6 +251,30 @@ class SessionManager:
         session_count = len(self.active_sessions)
         self.active_sessions.clear()
         print(f"🧹 全セッションをクリアしました ({session_count}件)")
+        
+    # Phase 4.4.3: 確認プロセス管理メソッド
+    def clear_expired_confirmation_contexts(self):
+        """期限切れの確認コンテキストをクリア"""
+        expired_users = []
+        
+        for user_id, session in self.active_sessions.items():
+            if session.pending_confirmation_context and not session.is_confirmation_context_valid():
+                expired_users.append(user_id)
+                session.clear_confirmation_context()
+                
+        if expired_users:
+            logger.info(f"⏰ {len(expired_users)}件の期限切れ確認コンテキストをクリアしました")
+            
+    def get_confirmation_context(self, user_id: str) -> Optional[dict]:
+        """ユーザーの確認コンテキストを取得"""
+        if user_id in self.active_sessions:
+            session = self.active_sessions[user_id]
+            if session.is_confirmation_context_valid():
+                return session.get_confirmation_context()
+            else:
+                # 期限切れの場合はクリア
+                session.clear_confirmation_context()
+        return None
 
 
 # グローバルセッションマネージャー

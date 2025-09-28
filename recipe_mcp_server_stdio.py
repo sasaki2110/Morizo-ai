@@ -218,7 +218,7 @@ JSON形式で以下の構造で回答してください：
                 {"role": "user", "content": prompt}
             ],
             temperature=0.7,
-            max_tokens=1000
+            max_tokens=4000
         )
         
         content = response.choices[0].message.content
@@ -512,8 +512,19 @@ async def search_recipe_from_web(
         # Perplexity API クライアントを取得
         client = get_perplexity_client()
         
-        # レシピ検索を実行
-        recipes = client.search_recipe(query, max_results=max_results)
+        # レシピ検索を実行（タイムアウト処理付き）
+        try:
+            import asyncio
+            recipes = await asyncio.wait_for(
+                asyncio.to_thread(client.search_recipe, query, max_results=max_results),
+                timeout=30.0  # 30秒でタイムアウト
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"Web検索タイムアウト: '{query}' (30秒)")
+            return {
+                "success": False,
+                "error": "Web検索がタイムアウトしました。しばらく時間をおいて再試行してください。"
+            }
         
         # レスポンス構築
         response_data = {

@@ -81,7 +81,7 @@ class PerplexityAPIClient:
                         "content": recipe_query
                     }
                 ],
-                "max_tokens": 2000,
+                "max_tokens": 4000,
                 "temperature": 0.1,
                 "top_p": 0.9,
                 "return_citations": True,

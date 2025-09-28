@@ -49,11 +49,20 @@ async def process_with_unified_react(request: ChatRequest, user_session, raw_tok
         )
         
     except UserConfirmationRequired as e:
-        # Phase 4.4: ユーザー確認が必要な場合の処理
+        # Phase 4.4.3: ユーザー確認が必要な場合の処理
         logger.info(f"🤔 [確認プロセス] ユーザー確認が必要: {request.message}")
         
         # 確認レスポンスを生成
         confirmation_response = e.confirmation_context
+        
+        # Phase 4.4.3: セッションに確認コンテキストを保存
+        user_session.save_confirmation_context(confirmation_response)
+        
+        # タスクチェーン状態も保存
+        if hasattr(e, 'executed_tasks') and hasattr(e, 'remaining_tasks'):
+            user_session.save_task_chain_state(e.executed_tasks, e.remaining_tasks)
+        
+        logger.info(f"💾 [確認プロセス] 確認コンテキストをセッションに保存: {user_session.user_id}")
         
         return ChatResponse(
             response=confirmation_response["response"],

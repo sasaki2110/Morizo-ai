@@ -185,6 +185,32 @@ async def inventory_list(token: str) -> Dict[str, Any]:
         return {"success": False, "error": f"データベース操作エラー: {str(e)}"}
 
 @mcp.tool()
+async def inventory_list_by_name(token: str, item_name: str) -> Dict[str, Any]:
+    """指定されたアイテム名の在庫一覧を取得
+    
+    指定されたアイテム名にマッチする在庫アイテムのみを取得します。
+    曖昧性検出や前提タスク生成で使用されます。
+    
+    Args:
+        token: 認証トークン
+        item_name: アイテム名
+    
+    Returns:
+        指定されたアイテム名の在庫一覧データ
+    """
+    try:
+        user_id = db_client.authenticate(token)
+        result = db_client.get_client().table("inventory").select("*").eq("user_id", user_id).eq("item_name", item_name).execute()
+        if result.data:
+            return {"success": True, "data": result.data}
+        else:
+            return {"success": False, "error": "No data found"}
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+    except Exception as e:
+        return {"success": False, "error": f"データベース操作エラー: {str(e)}"}
+
+@mcp.tool()
 async def inventory_get(token: str, item_id: str) -> Dict[str, Any]:
     """特定の在庫アイテムを1件取得
     

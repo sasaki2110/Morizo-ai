@@ -18,7 +18,7 @@ from openai import OpenAI
 logger = logging.getLogger("morizo_ai.planner")
 
 # 定数定義
-MAX_TOKENS = 1500
+MAX_TOKENS = 4000
 
 def estimate_tokens(text: str) -> int:
     """テキストのトークン数を概算する（日本語は1文字=1トークン、英語は4文字=1トークン）"""
@@ -56,6 +56,20 @@ class Task:
             "dependencies": self.dependencies,
             "result": self.result
         }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'Task':
+        """辞書からTaskオブジェクトを復元"""
+        return cls(
+            id=data['id'],
+            description=data['description'],
+            tool=data['tool'],
+            parameters=data['parameters'],
+            status=data.get('status', 'pending'),
+            priority=data.get('priority', 1),
+            dependencies=data.get('dependencies', []),
+            result=data.get('result', {})
+        )
 
 class ActionPlanner:
     """行動計画立案クラス"""
@@ -259,7 +273,15 @@ class ActionPlanner:
             overage_rate = (estimated_tokens / MAX_TOKENS) * 100
             
             logger.info(f"🧠 [計画立案] プロンプト全文 (総トークン数: {estimated_tokens}/{MAX_TOKENS}, 超過率: {overage_rate:.1f}%):")
-            logger.info(f"🧠 [計画立案] {planning_prompt}")
+            # プロンプト表示を5行に制限（デバッグ用に全文表示をコメントアウト）
+            prompt_lines = planning_prompt.split('\n')
+            if len(prompt_lines) > 5:
+                logger.info(f"🧠 [計画立案] {chr(10).join(prompt_lines[:5])}")
+                logger.info(f"🧠 [計画立案] ... (残り{len(prompt_lines)-5}行を省略)")
+            else:
+                logger.info(f"🧠 [計画立案] {planning_prompt}")
+            # 全文表示が必要な場合は以下のコメントを外す
+            # logger.info(f"🧠 [計画立案] {planning_prompt}")
             
             response = self.client.chat.completions.create(
                 model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
@@ -312,6 +334,9 @@ class ActionPlanner:
                 logger.warning(f"⚠️ [計画立案] 不適切なタスク生成を検出: {user_request}")
                 logger.warning(f"⚠️ [計画立案] 生成されたタスク数: {len(tasks)}")
                 return []  # 空のタスクリストを返す
+            
+            # Phase 2: 前提タスクの自動生成
+            tasks = self._add_prerequisite_tasks(tasks)
             
             return tasks
             
@@ -612,3 +637,58 @@ class ActionPlanner:
         
         logger.info(f"🔧 [計画最適化] {len(sorted_tasks)}個のタスクを優先度順にソート")
         return sorted_tasks
+    
+    def _add_prerequisite_tasks(self, tasks: List[Task]) -> List[Task]:
+        """
+        Phase 2: 削除・更新タスクの前に在庫確認タスクを自動生成
+        
+        Args:
+            tasks: 元のタスクリスト
+            
+        Returns:
+            前提タスクが追加されたタスクリスト
+        """
+        # 削除・更新操作のツール
+        inventory_operation_tools = [
+            "inventory_delete_by_name",
+            "inventory_update_by_name", 
+            "inventory_delete_by_name_oldest",
+            "inventory_delete_by_name_latest",
+            "inventory_update_by_name_oldest",
+            "inventory_update_by_name_latest"
+        ]
+        
+        enhanced_tasks = []
+        prerequisite_tasks = {}  # item_name -> prerequisite_task_id
+        
+        for task in tasks:
+            # 削除・更新タスクかチェック
+            if task.tool in inventory_operation_tools:
+                item_name = task.parameters.get("item_name")
+                if item_name:
+                    # 既に前提タスクが生成されているかチェック
+                    if item_name not in prerequisite_tasks:
+                        # 前提タスクを生成
+                        prerequisite_task = Task(
+                            id=f"prerequisite_{item_name}_{self.task_counter}",
+                            description=f"{item_name}の在庫状況を確認",
+                            tool="inventory_list_by_name",
+                            parameters={"item_name": item_name},
+                            priority=task.priority - 1,  # より高い優先度
+                            dependencies=[]
+                        )
+                        prerequisite_tasks[item_name] = prerequisite_task.id
+                        enhanced_tasks.append(prerequisite_task)
+                        self.task_counter += 1
+                        logger.info(f"🔧 [前提タスク] {item_name}の在庫確認タスクを生成: {prerequisite_task.id}")
+                    
+                    # 元のタスクの依存関係を更新
+                    task.dependencies.append(prerequisite_tasks[item_name])
+                    logger.info(f"🔧 [前提タスク] {task.id}の依存関係を更新: {task.dependencies}")
+            
+            enhanced_tasks.append(task)
+        
+        if prerequisite_tasks:
+            logger.info(f"🔧 [前提タスク] {len(prerequisite_tasks)}個の前提タスクを追加")
+        
+        return enhanced_tasks

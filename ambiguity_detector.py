@@ -85,6 +85,11 @@ class AmbiguityDetector:
         
         # inventory_delete_by_name の場合は、在庫件数に関係なく常に確認が必要
         if task.tool in ["inventory_delete_by_name", "inventory_update_by_name"]:
+            # 在庫が0個の場合は確認不要
+            if len(matching_items) == 0:
+                logger.info(f"🔍 [複数アイテム検出] 在庫0個のため確認不要: {item_name}")
+                return None
+            
             result = AmbiguityInfo(
                 type="multiple_items",
                 item_name=item_name,
@@ -114,6 +119,11 @@ class AmbiguityDetector:
         ]
         
         # inventory_delete_by_name_latest/oldest の場合は、在庫件数に関係なく常に確認が必要
+        # ただし、在庫が0個の場合は確認不要
+        if len(matching_items) == 0:
+            logger.info(f"🔍 [FIFO検出] 在庫0個のため確認不要: {item_name}")
+            return None
+        
         result = AmbiguityInfo(
             type="fifo_operation",
             item_name=item_name,

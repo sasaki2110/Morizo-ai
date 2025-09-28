@@ -11,6 +11,7 @@ For licensing inquiries, contact: [contact@morizo-ai.com]
 import json
 import logging
 import os
+import asyncio
 from typing import List, Dict, Any, Optional
 from action_planner import ActionPlanner, Task
 from task_manager import TaskManager
@@ -23,7 +24,7 @@ from task_chain_manager import TaskChainManager
 logger = logging.getLogger("morizo_ai.true_react")
 
 # 定数定義
-MAX_TOKENS = 200
+MAX_TOKENS = 4000
 
 def estimate_tokens(text: str) -> int:
     """テキストのトークン数を概算する（日本語は1文字=1トークン、英語は4文字=1トークン）"""
@@ -211,7 +212,16 @@ class TrueReactAgent:
             
             if not executable_tasks:
                 logger.error("❌ [並列依存関係解決] 循環依存または依存関係エラーが発生しました")
-                break
+                # 依存関係エラーが発生しても残りのタスクを実行可能にする
+                remaining_tasks = [task for task in tasks if task.id not in completed]
+                if remaining_tasks:
+                    logger.warning(f"⚠️ [並列依存関係解決] 残りのタスクを強制実行: {[t.id for t in remaining_tasks]}")
+                    # 残りのタスクを依存関係なしで実行
+                    for task in remaining_tasks:
+                        task.dependencies = []
+                    executable_tasks = remaining_tasks
+                else:
+                    break
             
             # 実行可能なタスクのIDをグループ化
             executable_ids = [task.id for task in executable_tasks]
@@ -493,7 +503,7 @@ class TrueReactAgent:
             # Phase 4.4: 曖昧性検出（在庫操作タスクの場合）
             if self._is_inventory_operation_task(enhanced_task):
                 try:
-                    await self._check_ambiguity_and_confirm(enhanced_task, user_session)
+                    await self._check_ambiguity_and_confirm(enhanced_task, user_session, completed_tasks)
                 except UserConfirmationRequired as e:
                     # 確認が必要な場合は例外を再発生
                     raise e
@@ -574,7 +584,15 @@ class TrueReactAgent:
             overage_rate = (estimated_tokens / MAX_TOKENS) * 100
             
             logger.info(f"🧠 [思考] プロンプト全文 (総トークン数: {estimated_tokens}/{MAX_TOKENS}, 超過率: {overage_rate:.1f}%):")
-            logger.info(f"🧠 [思考] {thinking_prompt}")
+            # プロンプト表示を5行に制限（デバッグ用に全文表示をコメントアウト）
+            prompt_lines = thinking_prompt.split('\n')
+            if len(prompt_lines) > 5:
+                logger.info(f"🧠 [思考] {chr(10).join(prompt_lines[:5])}")
+                logger.info(f"🧠 [思考] ... (残り{len(prompt_lines)-5}行を省略)")
+            else:
+                logger.info(f"🧠 [思考] {thinking_prompt}")
+            # 全文表示が必要な場合は以下のコメントを外す
+            # logger.info(f"🧠 [思考] {thinking_prompt}")
             
             response = self.client.chat.completions.create(
                 model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
@@ -638,6 +656,20 @@ class TrueReactAgent:
                 decision["tool"],
                 params
             )
+            
+            # 在庫0個での削除操作の場合の特別処理
+            if (decision["tool"] in ["inventory_delete_by_name_oldest", "inventory_delete_by_name_latest"] 
+                and isinstance(result, dict) 
+                and result.get("success") == False 
+                and "not found" in str(result.get("error", "")).lower()):
+                
+                item_name = params.get("item_name", "アイテム")
+                logger.info(f"🔍 [在庫0個処理] {item_name}の在庫が0個のため削除をスキップ")
+                return {
+                    "success": True, 
+                    "result": f"{item_name}の在庫が0個のため、削除操作をスキップしました。",
+                    "skipped": True
+                }
             
             logger.info(f"🎬 [行動] {decision['tool']} 実行完了")
             return {"success": True, "result": result}
@@ -926,30 +958,61 @@ class TrueReactAgent:
         ]
         return task.tool in inventory_tools
     
-    async def _check_ambiguity_and_confirm(self, task: Task, user_session) -> None:
+    async def _check_ambiguity_and_confirm(self, task: Task, user_session, completed_tasks: Dict[str, Any] = None) -> None:
         """
         曖昧性をチェックし、必要に応じて確認を求める
         
         Args:
             task: チェックするタスク
             user_session: ユーザーセッション
+            completed_tasks: 完了したタスクの結果（前提タスクの結果を含む）
             
         Raises:
             UserConfirmationRequired: 確認が必要な場合
         """
         try:
-            # 在庫リストを取得して曖昧性をチェック
-            from agents.mcp_client import call_mcp_tool
+            # Phase 2: 前提タスクの結果を活用した曖昧性検出
+            inventory_data = []
             
-            # 在庫リストを取得
-            inventory_result = await call_mcp_tool("inventory_list", {"token": user_session.token})
+            # 前提タスクの結果を確認
+            logger.info(f"🔍 [曖昧性チェック] completed_tasks: {list(completed_tasks.keys()) if completed_tasks else 'None'}")
+            if completed_tasks:
+                item_name = task.parameters.get("item_name")
+                logger.info(f"🔍 [曖昧性チェック] 検索対象item_name: {item_name}")
+                if item_name:
+                    # 前提タスクのIDを検索
+                    prerequisite_task_id = None
+                    for task_id, result in completed_tasks.items():
+                        logger.info(f"🔍 [曖昧性チェック] チェック中task_id: {task_id}")
+                        if task_id.startswith(f"prerequisite_{item_name}_"):
+                            prerequisite_task_id = task_id
+                            logger.info(f"🔍 [曖昧性チェック] 前提タスク発見: {prerequisite_task_id}")
+                            break
+                    
+                    if prerequisite_task_id and prerequisite_task_id in completed_tasks:
+                        prerequisite_result = completed_tasks[prerequisite_task_id]
+                        logger.info(f"🔍 [曖昧性チェック] 前提タスク結果: {prerequisite_result}")
+                        if isinstance(prerequisite_result, dict) and prerequisite_result.get("success"):
+                            # MCPツールの結果構造に合わせて修正（二重構造対応）
+                            inner_result = prerequisite_result.get("result", {})
+                            if isinstance(inner_result, dict) and inner_result.get("success"):
+                                inventory_data = inner_result.get("data", [])
+                            else:
+                                inventory_data = prerequisite_result.get("data", [])
+                            logger.info(f"🔍 [曖昧性チェック] 前提タスクの結果を活用: {len(inventory_data)}件の在庫")
             
-            if not inventory_result.get("success"):
-                logger.warning(f"⚠️ [曖昧性チェック] 在庫リスト取得失敗: {inventory_result.get('error')}")
-                return
-            
-            # 在庫データを抽出
-            inventory_data = inventory_result.get("result", {}).get("data", [])
+            # 前提タスクの結果がない場合は全在庫を取得
+            if inventory_data is None:
+                logger.info(f"🔍 [曖昧性チェック] 前提タスクの結果がないため全在庫を取得")
+                from agents.mcp_client import call_mcp_tool
+                
+                inventory_result = await call_mcp_tool("inventory_list", {"token": user_session.token})
+                
+                if not inventory_result.get("success"):
+                    logger.warning(f"⚠️ [曖昧性チェック] 在庫リスト取得失敗: {inventory_result.get('error')}")
+                    return
+                
+                inventory_data = inventory_result.get("data", [])
             
             # 曖昧性検出
             ambiguity_info = self.ambiguity_detector.detect_ambiguity(task, inventory_data)
@@ -983,3 +1046,119 @@ class TrueReactAgent:
         except Exception as e:
             logger.error(f"❌ [曖昧性チェック] エラー: {str(e)}")
             # エラーの場合は確認をスキップして続行
+                
+    # Phase 4.4.3: タスクチェーン再開処理
+    async def resume_task_chain(self, tasks: List[Task], user_session, confirmation_context: dict) -> str:
+        """
+        Phase 4.4.3: タスクチェーン再開処理
+        
+        Args:
+            tasks: 再開するタスクリスト
+            user_session: ユーザーセッション
+            confirmation_context: 確認コンテキスト
+            
+        Returns:
+            処理結果の応答
+        """
+        logger.info(f"🔄 [真のReAct] タスクチェーン再開: {len(tasks)}個のタスク")
+        
+        try:
+            # 確認応答で生成されたタスクのみを実行（元の曖昧なタスクは除外済み）
+            logger.info(f"🔄 [真のReAct] 確認応答で生成されたタスク: {[t.id for t in tasks]}")
+            
+            # タスクチェーン管理を更新
+            self.task_chain_manager.set_task_chain(tasks)
+            
+            # 依存関係を考慮した実行順序の決定
+            execution_groups = self._resolve_dependencies_with_parallel(tasks)
+            logger.info(f"🔄 [真のReAct] 再開実行グループ: {execution_groups}")
+            
+            # タスクチェーン実行
+            completed_tasks = {}
+            final_response = ""
+            
+            for group_index, task_group_ids in enumerate(execution_groups):
+                logger.info(f"🔄 [真のReAct] 再開サイクル {group_index + 1}: {task_group_ids}")
+                
+                # タスクIDからタスクオブジェクトを取得
+                task_group = [task for task in tasks if task.id in task_group_ids]
+                
+                # グループ内のタスクを並列実行
+                if len(task_group) == 1:
+                    try:
+                        result = await self._react_step(task_group[0], user_session, completed_tasks)
+                        # 成功したタスクのみをcompleted_tasksに追加
+                        if result.get("success", False):
+                            completed_tasks[task_group[0].id] = result
+                    except UserConfirmationRequired as e:
+                        # 再開中に確認が必要になった場合は、エラーメッセージを返す
+                        logger.warning(f"⚠️ [真のReAct] 再開中に確認が必要: {e}")
+                        return f"タスクチェーンの再開中に確認が必要になりました。最初からやり直してください。\n\nエラー: {str(e)}"
+                else:
+                    # 複数タスクの並列実行
+                    async def execute_single_task(task: Task) -> tuple[str, Dict[str, Any]]:
+                        logger.info(f"🔄 [再開並列実行] タスク開始: {task.id}")
+                        result = await self._react_step(task, user_session, completed_tasks)
+                        logger.info(f"✅ [再開並列実行] タスク完了: {task.id}")
+                        return task.id, result
+                    
+                    # asyncio.gatherで並列実行
+                    try:
+                        results = await asyncio.gather(*[execute_single_task(task) for task in task_group])
+                        
+                        # 結果を辞書に変換（成功したタスクのみ）
+                        for task_id, result in results:
+                            if result.get("success", False):
+                                completed_tasks[task_id] = result
+                    except UserConfirmationRequired as e:
+                        # 再開中に確認が必要になった場合は、エラーメッセージを返す
+                        logger.warning(f"⚠️ [真のReAct] 再開中に確認が必要: {e}")
+                        return f"タスクチェーンの再開中に確認が必要になりました。最初からやり直してください。\n\nエラー: {str(e)}"
+                
+                # 進捗表示は最終段階で生成（中間表示を削除）
+            
+            # 最終結果の生成
+            final_response += await self._generate_final_response(completed_tasks, confirmation_context)
+            
+            # ログ出力を削除（レスポンスのみで完了状況を報告）
+            
+            return final_response
+            
+        except Exception as e:
+            logger.error(f"❌ [真のReAct] タスクチェーン再開エラー: {str(e)}")
+            import traceback
+            logger.error(f"❌ [真のReAct] トレースバック: {traceback.format_exc()}")
+            return f"タスクチェーンの再開中にエラーが発生しました: {str(e)}"
+    
+    async def _generate_final_response(self, completed_tasks: dict, confirmation_context: dict) -> str:
+        """
+        最終結果の応答を生成
+        
+        Args:
+            completed_tasks: 実行済みタスクの結果
+            confirmation_context: 確認コンテキスト
+            
+        Returns:
+            最終応答
+        """
+        try:
+            # 実行結果をまとめる
+            results_summary = []
+            for task_id, result in completed_tasks.items():
+                if isinstance(result, dict) and result.get("success"):
+                    results_summary.append(f"✅ {result.get('message', '処理完了')}")
+                else:
+                    results_summary.append(f"⚠️ {task_id}: 処理に問題がありました")
+            
+            # 最終応答を生成
+            if results_summary:
+                final_response = "処理が完了しました。\n\n"
+                final_response += "\n".join(results_summary)
+            else:
+                final_response = "処理が完了しました。"
+            
+            return final_response
+            
+        except Exception as e:
+            logger.error(f"❌ [真のReAct] 最終応答生成エラー: {str(e)}")
+            return "処理が完了しました。"
