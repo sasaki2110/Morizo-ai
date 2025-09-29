@@ -144,7 +144,7 @@ class ConfirmationProcessTester:
             response_text = data.get("response", "")
             confirmation_required = data.get("confirmation_required", False)
             
-            logger.info(f"📥 [確認テスト] Step 1 レスポンス: {response_text[:100]}...")
+            logger.info(f"📥 [確認テスト] Step 1 レスポンス: {response_text}")
             logger.info(f"📥 [確認テスト] Step 1 確認必要: {confirmation_required}")
             
             # 確認プロセスが発動したかチェック
@@ -173,7 +173,7 @@ class ConfirmationProcessTester:
                 if confirm_response.status_code == 200:
                     confirm_data = confirm_response.json()
                     confirm_text = confirm_data.get("response", "")
-                    logger.info(f"📥 [確認テスト] Step 2 レスポンス: {confirm_text[:100]}...")
+                    logger.info(f"📥 [確認テスト] Step 2 レスポンス: {confirm_text}")
                     logger.info("✅ [確認テスト] 確認応答処理が正常に完了しました")
                     return True
                 else:

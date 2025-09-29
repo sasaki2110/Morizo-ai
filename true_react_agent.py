@@ -1149,61 +1149,139 @@ class TrueReactAgent:
             detailed_results = []
             
             for task_id, result in completed_tasks.items():
-                logger.debug(f"🔍 [デバッグ] タスク結果構造: {task_id}")
-                logger.debug(f"🔍 [デバッグ] result構造: {type(result)} - {result}")
+                logger.info(f"🔍 [デバッグ] タスク結果構造: {task_id}")
+                logger.info(f"🔍 [デバッグ] result構造: {type(result)} - {result}")
                 
                 if isinstance(result, dict) and result.get("success"):
                     message = result.get('message', '処理完了')
                     # 具体的な結果がある場合は詳細を表示
                     if 'data' in result and result['data']:
-                        logger.debug(f"🔍 [デバッグ] dataフィールド発見: {result['data']}")
+                        logger.info(f"🔍 [デバッグ] dataフィールド発見: {result['data']}")
                         detailed_results.append(result['data'])
                     elif 'response' in result and result['response']:
-                        logger.debug(f"🔍 [デバッグ] responseフィールド発見: {result['response']}")
+                        logger.info(f"🔍 [デバッグ] responseフィールド発見: {result['response']}")
                         detailed_results.append(result['response'])
                     elif 'result' in result and result['result']:
                         # MCPツールの結果をチェック
                         mcp_result = result['result']
-                        logger.debug(f"🔍 [デバッグ] MCP結果構造: {type(mcp_result)} - {mcp_result}")
+                        logger.info(f"🔍 [デバッグ] MCP結果構造: {type(mcp_result)} - {mcp_result}")
                         if isinstance(mcp_result, dict):
                             # MCPツールの結果からdataフィールドを抽出
                             if 'data' in mcp_result:
-                                logger.debug(f"🔍 [デバッグ] MCP dataフィールド発見: {mcp_result['data']}")
+                                logger.info(f"🔍 [デバッグ] MCP dataフィールド発見: {mcp_result['data']}")
                                 detailed_results.append(mcp_result['data'])
                             elif 'recipes' in mcp_result:
-                                logger.debug(f"🔍 [デバッグ] MCP recipesフィールド発見: {mcp_result['recipes']}")
+                                logger.info(f"🔍 [デバッグ] MCP recipesフィールド発見: {mcp_result['recipes']}")
                                 detailed_results.append(mcp_result)
                             elif 'menu' in mcp_result:
-                                logger.debug(f"🔍 [デバッグ] MCP menuフィールド発見: {mcp_result['menu']}")
+                                logger.info(f"🔍 [デバッグ] MCP menuフィールド発見: {mcp_result['menu']}")
                                 detailed_results.append(mcp_result)
                             else:
                                 # その他の構造の場合は文字列化
-                                logger.debug(f"🔍 [デバッグ] MCP結果を文字列化: {str(mcp_result)}")
+                                logger.info(f"🔍 [デバッグ] MCP結果を文字列化: {str(mcp_result)}")
                                 detailed_results.append(str(mcp_result))
                         elif isinstance(mcp_result, str):
-                            logger.debug(f"🔍 [デバッグ] MCP結果文字列: {mcp_result}")
+                            logger.info(f"🔍 [デバッグ] MCP結果文字列: {mcp_result}")
                             detailed_results.append(mcp_result)
                     else:
-                        logger.debug(f"🔍 [デバッグ] 汎用メッセージを使用: {message}")
+                        logger.info(f"🔍 [デバッグ] 汎用メッセージを使用: {message}")
                         results_summary.append(f"✅ {message}")
                 else:
-                    logger.debug(f"🔍 [デバッグ] タスク失敗: {task_id}")
+                    logger.info(f"🔍 [デバッグ] タスク失敗: {task_id}")
                     results_summary.append(f"⚠️ {task_id}: 処理に問題がありました")
             
             # 最終応答を生成
             final_response = ""
             
-            # 詳細な結果がある場合はそれを優先表示
-            if detailed_results:
+            # 献立データとレシピデータを分けて処理
+            menu_data = None
+            recipe_data = None
+            
+            logger.info(f"🔍 [デバッグ] detailed_results: {len(detailed_results)}件")
+            for i, detail in enumerate(detailed_results):
+                logger.info(f"🔍 [デバッグ] detail[{i}]: {type(detail)} - {detail}")
+                if isinstance(detail, dict):
+                    # 献立データの検出
+                    if 'main_dish' in detail or 'side_dish' in detail or 'soup' in detail:
+                        logger.info(f"🔍 [デバッグ] 献立データ検出: {detail}")
+                        menu_data = detail
+                    # レシピデータの検出
+                    elif 'recipes' in detail:
+                        logger.info(f"🔍 [デバッグ] レシピデータ検出: {detail}")
+                        recipe_data = detail
+                    # ネストされたデータの検出
+                    elif 'data' in detail and isinstance(detail['data'], dict):
+                        if 'recipes' in detail['data']:
+                            logger.info(f"🔍 [デバッグ] ネストされたレシピデータ検出: {detail['data']}")
+                            recipe_data = detail['data']
+                        elif 'main_dish' in detail['data'] or 'side_dish' in detail['data']:
+                            logger.info(f"🔍 [デバッグ] ネストされた献立データ検出: {detail['data']}")
+                            menu_data = detail['data']
+            
+            # 献立データの表示
+            logger.info(f"🔍 [デバッグ] menu_data: {menu_data}")
+            logger.info(f"🔍 [デバッグ] recipe_data: {recipe_data}")
+            
+            if menu_data:
+                final_response += "🍽️ **生成された献立**\n\n"
+                
+                if 'main_dish' in menu_data and menu_data['main_dish']:
+                    main_dish = menu_data['main_dish']
+                    final_response += f"**主菜**: {main_dish.get('title', '未設定')}\n"
+                    if 'ingredients' in main_dish:
+                        final_response += f"  材料: {', '.join(main_dish['ingredients'])}\n"
+                
+                if 'side_dish' in menu_data and menu_data['side_dish']:
+                    side_dish = menu_data['side_dish']
+                    final_response += f"**副菜**: {side_dish.get('title', '未設定')}\n"
+                    if 'ingredients' in side_dish:
+                        final_response += f"  材料: {', '.join(side_dish['ingredients'])}\n"
+                
+                if 'soup' in menu_data and menu_data['soup']:
+                    soup = menu_data['soup']
+                    final_response += f"**汁物**: {soup.get('title', '未設定')}\n"
+                    if 'ingredients' in soup:
+                        final_response += f"  材料: {', '.join(soup['ingredients'])}\n"
+                
+                final_response += "\n"
+            
+            # レシピデータの表示
+            if recipe_data and 'recipes' in recipe_data:
+                final_response += "🔗 **レシピリンク**\n\n"
+                
+                for i, recipe in enumerate(recipe_data['recipes'], 1):
+                    if isinstance(recipe, dict) and 'url' in recipe:
+                        title = recipe.get('title', f'レシピ{i}')
+                        url = recipe['url']
+                        source = recipe.get('source', '')
+                        
+                        if source:
+                            final_response += f"{i}. **{title}** ({source})\n"
+                        else:
+                            final_response += f"{i}. **{title}**\n"
+                        
+                        final_response += f"   🔗 {url}\n"
+                        
+                        if 'cooking_time' in recipe and recipe['cooking_time']:
+                            final_response += f"   ⏰ 調理時間: {recipe['cooking_time']}\n"
+                        
+                        if 'servings' in recipe and recipe['servings']:
+                            final_response += f"   👥 分量: {recipe['servings']}\n"
+                        
+                        final_response += "\n"
+            
+            # 詳細な結果があるが、献立・レシピデータでない場合
+            if detailed_results and not menu_data and not recipe_data:
                 for detail in detailed_results:
                     if isinstance(detail, str) and len(detail.strip()) > 0:
                         final_response += detail + "\n\n"
             
             # 処理完了のサマリーを追加
             if results_summary:
-                final_response += "処理が完了しました。\n\n"
+                if not final_response.strip():
+                    final_response += "処理が完了しました。\n\n"
                 final_response += "\n".join(results_summary)
-            else:
+            elif not final_response.strip():
                 final_response += "処理が完了しました。"
             
             return final_response.strip()
