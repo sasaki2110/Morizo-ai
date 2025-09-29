@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Phase 4.4.3: レシピ検索統合専用テスト
+Phase 4.4.3: レシピ検索統合専用テスト（2025/9/29更新）
 サーバー起動状態でのレシピ検索統合機能の動作確認のみ
+配列対応レシピ検索機能のテスト
 """
 
 import asyncio
@@ -155,20 +156,29 @@ class RecipeIntegrationTester:
                 "汁物"                    # 献立の詳細
             ]
             
+            # 配列対応レシピ検索の追加確認
+            url_count = response_text.count("http")
+            if url_count >= 3:
+                logger.info(f"✅ [レシピ統合テスト] 複数レシピURL検出: {url_count}個")
+            else:
+                logger.warning(f"⚠️ [レシピ統合テスト] レシピURL数が不足: {url_count}個")
+            
             found_indicators = []
             for indicator in success_indicators:
                 if indicator in response_text:
                     found_indicators.append(indicator)
                     logger.info(f"✅ [レシピ統合テスト] 成功指標発見: {indicator}")
             
-            # 成功基準: 少なくとも3つの指標が見つかること
-            if len(found_indicators) >= 3:
-                logger.info(f"✅ [レシピ統合テスト] レシピ検索統合機能が正常に動作しました")
+            # 成功基準: 少なくとも3つの指標が見つかり、複数URLが存在すること
+            if len(found_indicators) >= 3 and url_count >= 3:
+                logger.info(f"✅ [レシピ統合テスト] レシピ検索統合機能が正常に動作しました（配列対応）")
                 logger.info(f"📊 [レシピ統合テスト] 発見された指標: {len(found_indicators)}/{len(success_indicators)}")
+                logger.info(f"📊 [レシピ統合テスト] レシピURL数: {url_count}個")
                 return True
             else:
                 logger.warning(f"⚠️ [レシピ統合テスト] レシピ検索統合機能の動作が不十分です")
                 logger.warning(f"📊 [レシピ統合テスト] 発見された指標: {len(found_indicators)}/{len(success_indicators)}")
+                logger.warning(f"📊 [レシピ統合テスト] レシピURL数: {url_count}個")
                 logger.warning(f"📊 [レシピ統合テスト] 発見された指標: {found_indicators}")
                 return False
                 
