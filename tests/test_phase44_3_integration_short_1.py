@@ -44,6 +44,8 @@ def setup_logging():
     root_logger.addHandler(file_handler)
     root_logger.addHandler(console_handler)
     
+    # テスト用ロガーはINFOレベルを維持（テスト結果の確認のため）
+    
     return logging.getLogger('morizo_ai.confirmation_test')
 
 # ログ設定を実行

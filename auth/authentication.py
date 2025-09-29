@@ -29,13 +29,13 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(HTTPB
     """
     Supabaseトークンを検証し、ユーザー情報を返す
     """
-    logger.info("🔍 [AUTH] 認証処理開始")
+    logger.debug("🔍 [AUTH] 認証処理開始")
     
     # Supabase設定
     supabase_url = os.getenv("SUPABASE_URL")
     supabase_key = os.getenv("SUPABASE_KEY")
     
-    logger.info(f"🔍 [AUTH] Supabase設定確認: URL={supabase_url is not None}, KEY={supabase_key is not None}")
+    logger.debug(f"🔍 [AUTH] Supabase設定確認: URL={supabase_url is not None}, KEY={supabase_key is not None}")
     
     if not supabase_url or not supabase_key:
         logger.error("❌ [AUTH] Supabase設定不備")
@@ -54,8 +54,8 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(HTTPB
         
         # トークンを省略表示
         token_preview = f"{raw_token[:20]}...{raw_token[-20:]}" if len(raw_token) > 40 else raw_token
-        logger.info(f"🔍 [AUTH] Token received: {token_preview}")
-        logger.info(f"🔍 [AUTH] Token length: {len(raw_token)}")
+        logger.debug(f"🔍 [AUTH] Token received: {token_preview}")
+        logger.debug(f"🔍 [AUTH] Token length: {len(raw_token)}")
         
         # トークンからユーザー情報を取得
         response = supabase.auth.get_user(raw_token)

@@ -273,15 +273,13 @@ class ActionPlanner:
             overage_rate = (estimated_tokens / MAX_TOKENS) * 100
             
             logger.info(f"🧠 [計画立案] プロンプト全文 (総トークン数: {estimated_tokens}/{MAX_TOKENS}, 超過率: {overage_rate:.1f}%):")
-            # プロンプト表示を5行に制限（デバッグ用に全文表示をコメントアウト）
+            # プロンプト表示を5行に制限
             prompt_lines = planning_prompt.split('\n')
             if len(prompt_lines) > 5:
                 logger.info(f"🧠 [計画立案] {chr(10).join(prompt_lines[:5])}")
                 logger.info(f"🧠 [計画立案] ... (残り{len(prompt_lines)-5}行を省略)")
             else:
                 logger.info(f"🧠 [計画立案] {planning_prompt}")
-            # 全文表示が必要な場合は以下のコメントを外す
-            # logger.info(f"🧠 [計画立案] {planning_prompt}")
             
             response = self.client.chat.completions.create(
                 model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),

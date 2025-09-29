@@ -36,17 +36,17 @@ logger = setup_logging()
 
 # インポートテスト
 try:
-    logger.info("🔍 [MAIN] モジュールインポートテスト開始")
+    logger.debug("🔍 [MAIN] モジュールインポートテスト開始")
     from handlers.chat_handler import handle_chat_request
-    logger.info("✅ [MAIN] chat_handler インポート成功")
+    logger.debug("✅ [MAIN] chat_handler インポート成功")
     from auth.authentication import verify_token
-    logger.info("✅ [MAIN] authentication インポート成功")
+    logger.debug("✅ [MAIN] authentication インポート成功")
     from models.requests import ChatRequest, ChatResponse
-    logger.info("✅ [MAIN] models インポート成功")
+    logger.debug("✅ [MAIN] models インポート成功")
     from agents.mcp_client import get_available_tools_from_mcp
-    logger.info("✅ [MAIN] agents インポート成功")
-    logger.info("✅ [MAIN] utils インポート成功")
-    logger.info("✅ [MAIN] 全モジュールインポート成功")
+    logger.debug("✅ [MAIN] agents インポート成功")
+    logger.debug("✅ [MAIN] utils インポート成功")
+    logger.debug("✅ [MAIN] 全モジュールインポート成功")
 except Exception as e:
     logger.error(f"❌ [MAIN] インポートエラー: {str(e)}")
     import traceback

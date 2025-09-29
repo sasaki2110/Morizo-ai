@@ -93,13 +93,13 @@ async def handle_chat_request(request: ChatRequest, auth_data) -> ChatResponse:
     try:
         logger.info(f"🔍 [CHAT_HANDLER] 処理開始")
         logger.info(f"🔍 [CHAT_HANDLER] リクエスト: {request.message}")
-        logger.info(f"🔍 [CHAT_HANDLER] 認証データタイプ: {type(auth_data)}")
+        logger.debug(f"🔍 [CHAT_HANDLER] 認証データタイプ: {type(auth_data)}")
         
         current_user = auth_data["user"]
         raw_token = auth_data["raw_token"]
         
-        logger.info(f"🔍 [CHAT_HANDLER] ユーザー情報取得完了: {current_user.email}")
-        logger.info(f"🔍 [CHAT_HANDLER] トークン取得完了: {raw_token[:20]}...")
+        logger.debug(f"🔍 [CHAT_HANDLER] ユーザー情報取得完了: {current_user.email}")
+        logger.debug(f"🔍 [CHAT_HANDLER] トークン取得完了: {raw_token[:20]}...")
         
         # === セッション管理 ===
         logger.info(f"🔍 [CHAT_HANDLER] セッション管理開始")
@@ -111,9 +111,9 @@ async def handle_chat_request(request: ChatRequest, auth_data) -> ChatResponse:
         
         logger.info(f"\n=== Morizo AI 統一ReActエージェント 開始 ===")
         logger.info(f"🔍 [観察] ユーザー入力: {request.message}")
-        logger.info(f"   User: {current_user.email}")
-        logger.info(f"   User ID: {current_user.id}")
-        logger.info(f"   Session ID: {user_session.session_id}")
+        logger.debug(f"   User: {current_user.email}")
+        logger.debug(f"   User ID: {current_user.id}")
+        logger.debug(f"   Session ID: {user_session.session_id}")
         
         # 統一されたReActエージェントで処理
         result = await process_with_unified_react(request, user_session, raw_token)

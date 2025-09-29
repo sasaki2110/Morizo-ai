@@ -194,12 +194,12 @@ class TrueReactAgent:
         completed = set()
         execution_groups = []
         
-        logger.info(f"🔍 [並列依存関係解決] {len(tasks)}個のタスクの依存関係を解析")
+        logger.debug(f"🔍 [並列依存関係解決] {len(tasks)}個のタスクの依存関係を解析")
         
         # 依存関係の詳細をログ出力
         for task in tasks:
             deps_str = ", ".join(task.dependencies) if task.dependencies else "なし"
-            logger.info(f"🔍 [並列依存関係解決] {task.id}: {task.description} (依存: [{deps_str}])")
+            logger.debug(f"🔍 [並列依存関係解決] {task.id}: {task.description} (依存: [{deps_str}])")
         
         # 依存関係を解決して実行順序を決定（並列実行対応）
         while len(completed) < len(tasks):
@@ -231,9 +231,9 @@ class TrueReactAgent:
             for task_id in executable_ids:
                 completed.add(task_id)
             
-            logger.info(f"✅ [並列依存関係解決] 並列実行グループ: {executable_ids}")
+            logger.debug(f"✅ [並列依存関係解決] 並列実行グループ: {executable_ids}")
         
-        logger.info(f"📝 [並列依存関係解決] 最終実行グループ: {execution_groups}")
+        logger.debug(f"📝 [並列依存関係解決] 最終実行グループ: {execution_groups}")
         return execution_groups
     
     def _can_execute_task(self, task: Task, completed_tasks: Dict[str, Any]) -> bool:
@@ -584,15 +584,13 @@ class TrueReactAgent:
             overage_rate = (estimated_tokens / MAX_TOKENS) * 100
             
             logger.info(f"🧠 [思考] プロンプト全文 (総トークン数: {estimated_tokens}/{MAX_TOKENS}, 超過率: {overage_rate:.1f}%):")
-            # プロンプト表示を5行に制限（デバッグ用に全文表示をコメントアウト）
+            # プロンプト表示を5行に制限
             prompt_lines = thinking_prompt.split('\n')
             if len(prompt_lines) > 5:
                 logger.info(f"🧠 [思考] {chr(10).join(prompt_lines[:5])}")
                 logger.info(f"🧠 [思考] ... (残り{len(prompt_lines)-5}行を省略)")
             else:
                 logger.info(f"🧠 [思考] {thinking_prompt}")
-            # 全文表示が必要な場合は以下のコメントを外す
-            # logger.info(f"🧠 [思考] {thinking_prompt}")
             
             response = self.client.chat.completions.create(
                 model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
@@ -650,7 +648,11 @@ class TrueReactAgent:
                params["token"] = user_session.token
             
             logger.info(f"🎬 [行動] {decision['tool']} 実行開始")
-            logger.info(f"🎬 [行動] パラメータ: {params}")
+            # トークンを省略してログ出力
+            log_params = params.copy()
+            if "token" in log_params:
+                log_params["token"] = f"{log_params['token'][:20]}..."
+            logger.info(f"🎬 [行動] パラメータ: {log_params}")
             
             result = await call_mcp_tool(
                 decision["tool"],
@@ -991,7 +993,7 @@ class TrueReactAgent:
                     
                     if prerequisite_task_id and prerequisite_task_id in completed_tasks:
                         prerequisite_result = completed_tasks[prerequisite_task_id]
-                        logger.info(f"🔍 [曖昧性チェック] 前提タスク結果: {prerequisite_result}")
+                        logger.debug(f"🔍 [曖昧性チェック] 前提タスク結果: {prerequisite_result}")
                         if isinstance(prerequisite_result, dict) and prerequisite_result.get("success"):
                             # MCPツールの結果構造に合わせて修正（二重構造対応）
                             inner_result = prerequisite_result.get("result", {})
@@ -1147,45 +1149,45 @@ class TrueReactAgent:
             detailed_results = []
             
             for task_id, result in completed_tasks.items():
-                logger.info(f"🔍 [デバッグ] タスク結果構造: {task_id}")
-                logger.info(f"🔍 [デバッグ] result構造: {type(result)} - {result}")
+                logger.debug(f"🔍 [デバッグ] タスク結果構造: {task_id}")
+                logger.debug(f"🔍 [デバッグ] result構造: {type(result)} - {result}")
                 
                 if isinstance(result, dict) and result.get("success"):
                     message = result.get('message', '処理完了')
                     # 具体的な結果がある場合は詳細を表示
                     if 'data' in result and result['data']:
-                        logger.info(f"🔍 [デバッグ] dataフィールド発見: {result['data']}")
+                        logger.debug(f"🔍 [デバッグ] dataフィールド発見: {result['data']}")
                         detailed_results.append(result['data'])
                     elif 'response' in result and result['response']:
-                        logger.info(f"🔍 [デバッグ] responseフィールド発見: {result['response']}")
+                        logger.debug(f"🔍 [デバッグ] responseフィールド発見: {result['response']}")
                         detailed_results.append(result['response'])
                     elif 'result' in result and result['result']:
                         # MCPツールの結果をチェック
                         mcp_result = result['result']
-                        logger.info(f"🔍 [デバッグ] MCP結果構造: {type(mcp_result)} - {mcp_result}")
+                        logger.debug(f"🔍 [デバッグ] MCP結果構造: {type(mcp_result)} - {mcp_result}")
                         if isinstance(mcp_result, dict):
                             # MCPツールの結果からdataフィールドを抽出
                             if 'data' in mcp_result:
-                                logger.info(f"🔍 [デバッグ] MCP dataフィールド発見: {mcp_result['data']}")
+                                logger.debug(f"🔍 [デバッグ] MCP dataフィールド発見: {mcp_result['data']}")
                                 detailed_results.append(mcp_result['data'])
                             elif 'recipes' in mcp_result:
-                                logger.info(f"🔍 [デバッグ] MCP recipesフィールド発見: {mcp_result['recipes']}")
+                                logger.debug(f"🔍 [デバッグ] MCP recipesフィールド発見: {mcp_result['recipes']}")
                                 detailed_results.append(mcp_result)
                             elif 'menu' in mcp_result:
-                                logger.info(f"🔍 [デバッグ] MCP menuフィールド発見: {mcp_result['menu']}")
+                                logger.debug(f"🔍 [デバッグ] MCP menuフィールド発見: {mcp_result['menu']}")
                                 detailed_results.append(mcp_result)
                             else:
                                 # その他の構造の場合は文字列化
-                                logger.info(f"🔍 [デバッグ] MCP結果を文字列化: {str(mcp_result)}")
+                                logger.debug(f"🔍 [デバッグ] MCP結果を文字列化: {str(mcp_result)}")
                                 detailed_results.append(str(mcp_result))
                         elif isinstance(mcp_result, str):
-                            logger.info(f"🔍 [デバッグ] MCP結果文字列: {mcp_result}")
+                            logger.debug(f"🔍 [デバッグ] MCP結果文字列: {mcp_result}")
                             detailed_results.append(mcp_result)
                     else:
-                        logger.info(f"🔍 [デバッグ] 汎用メッセージを使用: {message}")
+                        logger.debug(f"🔍 [デバッグ] 汎用メッセージを使用: {message}")
                         results_summary.append(f"✅ {message}")
                 else:
-                    logger.info(f"🔍 [デバッグ] タスク失敗: {task_id}")
+                    logger.debug(f"🔍 [デバッグ] タスク失敗: {task_id}")
                     results_summary.append(f"⚠️ {task_id}: 処理に問題がありました")
             
             # 最終応答を生成

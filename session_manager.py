@@ -101,7 +101,7 @@ class SessionContext:
         """確認コンテキストを保存"""
         self.pending_confirmation_context = confirmation_context
         self.last_activity = datetime.now()
-        logger.info(f"💾 [セッション] 確認コンテキストを保存: {self.user_id}")
+        logger.debug(f"💾 [セッション] 確認コンテキストを保存: {self.user_id}")
         
     def get_confirmation_context(self) -> Optional[dict]:
         """確認コンテキストを取得"""
@@ -113,7 +113,7 @@ class SessionContext:
         self.task_chain_state = None
         self.executed_tasks = []
         self.remaining_tasks = []
-        logger.info(f"🧹 [セッション] 確認コンテキストをクリア: {self.user_id}")
+        logger.debug(f"🧹 [セッション] 確認コンテキストをクリア: {self.user_id}")
         
     def is_confirmation_context_valid(self) -> bool:
         """確認コンテキストが有効かチェック"""
@@ -133,7 +133,7 @@ class SessionContext:
             "remaining_count": len(remaining_tasks),
             "timestamp": datetime.now().isoformat()
         }
-        logger.info(f"📊 [セッション] タスクチェーン状態を保存: 実行済み{len(executed_tasks)}件, 残り{len(remaining_tasks)}件")
+        logger.debug(f"📊 [セッション] タスクチェーン状態を保存: 実行済み{len(executed_tasks)}件, 残り{len(remaining_tasks)}件")
         
         
         

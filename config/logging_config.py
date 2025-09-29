@@ -37,16 +37,27 @@ def setup_logging():
     # ログローテーション実行
     log_file = setup_log_rotation()
     
-    # ログ設定
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler(log_file, encoding='utf-8', mode='a'),
-            logging.StreamHandler()  # コンソール出力も残す
-        ],
-        force=True  # 既存の設定を上書き
-    )
+    # ファイルハンドラー（INFOレベルのみ）
+    file_handler = logging.FileHandler(log_file, encoding='utf-8', mode='a')
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+    
+    # コンソールハンドラー（INFOレベルのみ）
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+    
+    # ルートロガー設定（INFOレベルのみ）
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    root_logger.addHandler(file_handler)
+    root_logger.addHandler(console_handler)
+    
+    # 個別ロガーはDEBUGレベルに設定（ファイルには出力されない）
+    logging.getLogger('morizo_ai.planner').setLevel(logging.DEBUG)
+    logging.getLogger('morizo_ai.true_react').setLevel(logging.DEBUG)
+    logging.getLogger('morizo_ai.ambiguity_detector').setLevel(logging.DEBUG)
+    logging.getLogger('morizo_ai.session').setLevel(logging.DEBUG)
     
     # FastMCPのログを抑制
     logging.getLogger('mcp').setLevel(logging.WARNING)

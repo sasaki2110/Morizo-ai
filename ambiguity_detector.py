@@ -81,7 +81,7 @@ class AmbiguityDetector:
         ]
         
         logger.info(f"🔍 [複数アイテム検出] マッチングアイテム数: {len(matching_items)}")
-        logger.info(f"🔍 [複数アイテム検出] マッチングアイテム: {matching_items}")
+        logger.debug(f"🔍 [複数アイテム検出] マッチングアイテム: {matching_items}")
         
         # inventory_delete_by_name の場合は、在庫件数に関係なく常に確認が必要
         if task.tool in ["inventory_delete_by_name", "inventory_update_by_name"]:
@@ -97,7 +97,7 @@ class AmbiguityDetector:
                 task=task,
                 needs_confirmation=True
             )
-            logger.info(f"🔍 [複数アイテム検出] 曖昧性検出（在庫件数: {len(matching_items)}）: {result}")
+            logger.debug(f"🔍 [複数アイテム検出] 曖昧性検出（在庫件数: {len(matching_items)}）: {result}")
             return result
         
         logger.info(f"🔍 [複数アイテム検出] 曖昧性なし（アイテム数: {len(matching_items)}）")
