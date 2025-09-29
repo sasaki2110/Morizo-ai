@@ -130,7 +130,7 @@ async def call_mcp_tool(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, 
         # ツール名から適切なMCPサーバーを判定
         if tool_name.startswith("inventory_") or tool_name.startswith("recipes_"):
             server_type = "db"
-        elif tool_name.startswith("generate_menu_") or tool_name.startswith("search_recipe_"):
+        elif tool_name.startswith("generate_menu_") or tool_name.startswith("search_recipe_") or tool_name.startswith("search_menu_"):
             server_type = "recipe"
         else:
             # デフォルトはDB MCP

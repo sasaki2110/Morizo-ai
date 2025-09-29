@@ -15,6 +15,8 @@ Recipe MCP Server (stdio transport)
 import os
 import json
 import logging
+import asyncio
+from datetime import datetime
 from typing import Dict, Any, List, Optional
 from fastmcp import FastMCP
 from pydantic import BaseModel
@@ -250,6 +252,75 @@ JSON形式で以下の構造で回答してください：
         logger.error(f"LLM献立生成エラー: {e}")
         raise
 
+async def generate_menu_with_rag(
+    inventory_items: List[str],
+    menu_type: str,
+    excluded_recipes: List[str],
+    max_results: int = 3
+) -> Dict[str, Any]:
+    """RAG検索を使って献立を生成（伝統的アプローチ）"""
+    try:
+        # ベクトル検索インスタンスを取得
+        vector_search = get_vector_search()
+        vector_search._load_vector_db()  # ベクトルDBを読み込み
+        
+        # 在庫食材から検索クエリを生成
+        rag_query = f"{menu_type} {' '.join(inventory_items[:5])} 献立 主菜 副菜 汁物"
+        logger.info(f"🔍 [RAG献立] 検索クエリ生成: '{rag_query}'")
+        
+        # ベクトル検索実行
+        search_results = vector_search.search_similar_recipes(rag_query, k=max_results * 3)
+        
+        logger.info(f"🔍 [RAG献立] ベクトル検索結果: {len(search_results)}件")
+        
+        # 検索結果から献立タイトルを抽出
+        rag_titles = []
+        for result in search_results:
+            title = result.get("title", "レシピ")
+            rag_titles.append(title)
+            logger.info(f"🔍 [RAG献立] 発見: {title}")
+        
+        # 献立タイトルから主菜・副菜・汁物を分類
+        main_dish_titles = [t for t in rag_titles if any(keyword in t for keyword in ["肉", "魚", "鶏", "豚", "牛", "カレー", "ハンバーグ", "唐揚げ"])]
+        side_dish_titles = [t for t in rag_titles if any(keyword in t for keyword in ["サラダ", "和え物", "おひたし", "炒め物", "煮物"])]
+        soup_titles = [t for t in rag_titles if any(keyword in t for keyword in ["汁", "スープ", "味噌汁", "豚汁"])]
+        
+        # デフォルト値の設定
+        if not main_dish_titles:
+            main_dish_titles = ["肉じゃが"]
+        if not side_dish_titles:
+            side_dish_titles = ["ほうれん草のおひたし"]
+        if not soup_titles:
+            soup_titles = ["味噌汁"]
+        
+        # 献立データ構築
+        menu_data = {
+            "main_dish": {
+                "title": main_dish_titles[0],
+                "ingredients": inventory_items[:3]  # 在庫から適当に選択
+            },
+            "side_dish": {
+                "title": side_dish_titles[0],
+                "ingredients": inventory_items[3:6] if len(inventory_items) > 3 else inventory_items[:3]
+            },
+            "soup": {
+                "title": soup_titles[0],
+                "ingredients": inventory_items[6:9] if len(inventory_items) > 6 else inventory_items[:3]
+            }
+        }
+        
+        logger.info(f"✅ [RAG献立] 生成完了: 主菜={menu_data['main_dish']['title']}")
+        return menu_data
+        
+    except Exception as e:
+        logger.error(f"❌ [RAG献立] 生成エラー: {e}")
+        # フォールバック: デフォルト献立
+        return {
+            "main_dish": {"title": "肉じゃが", "ingredients": inventory_items[:3]},
+            "side_dish": {"title": "ほうれん草のおひたし", "ingredients": inventory_items[3:6] if len(inventory_items) > 3 else inventory_items[:3]},
+            "soup": {"title": "味噌汁", "ingredients": inventory_items[6:9] if len(inventory_items) > 6 else inventory_items[:3]}
+        }
+
 # 食材重複チェックと使用状況計算関数を削除（AIネイティブアプローチでは不要）
 
 # MCPツール定義
@@ -318,6 +389,77 @@ async def generate_menu_plan_with_history(
         return {
             "success": False,
             "error": f"献立生成エラー: {str(e)}"
+        }
+
+@mcp.tool()
+async def search_menu_from_rag_with_history(
+    inventory_items: List[str],
+    excluded_recipes: List[str] = None,
+    menu_type: str = "和食",
+    max_results: int = 3,
+    token: str = None
+) -> Dict[str, Any]:
+    """在庫食材からRAG検索で献立タイトルを生成（責任分離設計）
+    
+    🎯 使用場面: 在庫食材からRAG検索で伝統的な献立タイトルを提案する場合
+    
+    📋 パラメータ:
+    - inventory_items: 在庫食材リスト
+    - excluded_recipes: 除外する過去レシピのリスト
+    - menu_type: 献立のタイプ（和食・洋食・中華）
+    - max_results: 取得する最大件数（デフォルト: 3）
+    
+    📋 JSON形式:
+    {
+        "success": true,
+        "data": {
+            "main_dish": {
+                "title": "肉じゃが",
+                "ingredients": ["豚肉", "じゃがいも", "人参", "玉ねぎ"]
+            },
+            "side_dish": {
+                "title": "ほうれん草のおひたし",
+                "ingredients": ["ほうれん草", "醤油", "だし"]
+            },
+            "soup": {
+                "title": "味噌汁",
+                "ingredients": ["味噌", "豆腐", "わかめ"]
+            },
+            "excluded_recipes": []
+        }
+    }
+    """
+    try:
+        logger.info(f"🔍 [RAG献立] 検索開始: 食材{len(inventory_items)}件")
+        
+        # RAG検索で献立タイトルを生成
+        menu_data = await generate_menu_with_rag(
+            inventory_items, 
+            menu_type, 
+            excluded_recipes or [],
+            max_results
+        )
+        
+        # レスポンス構築
+        response_data = {
+            "main_dish": menu_data.get("main_dish", {}),
+            "side_dish": menu_data.get("side_dish", {}),
+            "soup": menu_data.get("soup", {}),
+            "excluded_recipes": excluded_recipes or []
+        }
+        
+        logger.info(f"✅ [RAG献立] 検索完了: 主菜={response_data['main_dish'].get('title', 'N/A')}")
+        
+        return {
+            "success": True,
+            "data": response_data
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ [RAG献立] 検索エラー: {e}")
+        return {
+            "success": False,
+            "error": f"RAG献立検索エラー: {str(e)}"
         }
 
 @mcp.tool()
@@ -476,17 +618,15 @@ async def search_recipe_from_rag(
 
 @mcp.tool()
 async def search_recipe_from_web(
-    query: str = None,
-    queries: List[str] = None,
+    menu_titles: List[str],
     max_results: int = 3
 ) -> Dict[str, Any]:
-    """Web検索によるレシピ検索（Perplexity API）
+    """Web検索によるレシピ検索（責任分離設計）
     
-    🎯 使用場面: 人間が作ったレシピの詳細情報を取得する場合
+    🎯 使用場面: 献立タイトルからレシピURLを取得する場合
     
     📋 パラメータ:
-    - query: 検索クエリ（例: "肉じゃが 作り方", "フレンチトースト レシピ"）
-    - queries: 検索クエリの配列（例: ["肉じゃが 作り方", "味噌汁 作り方"]）
+    - menu_titles: 献立タイトルの配列（例: ["肉じゃが", "ほうれん草のおひたし", "味噌汁"]）
     - max_results: 取得する最大件数（デフォルト: 3）
     
     📋 JSON形式:
@@ -511,19 +651,16 @@ async def search_recipe_from_web(
     """
     try:
         # パラメータの検証
-        if not query and not queries:
+        if not menu_titles:
             return {
                 "success": False,
-                "error": "queryまたはqueriesパラメータが必要です"
+                "error": "menu_titlesパラメータが必要です"
             }
         
-        # 単一クエリの場合は配列に変換
-        if query and not queries:
-            queries = [query]
-        elif query and queries:
-            queries = [query] + queries
+        # 献立タイトルから検索クエリを生成
+        queries = [f"{title} 作り方" for title in menu_titles]
         
-        logger.info(f"Web検索開始: {len(queries)}個のクエリ (最大{max_results}件/クエリ)")
+        logger.info(f"🔍 [Web検索] 開始: {len(queries)}個の献立タイトル (最大{max_results}件/タイトル)")
         
         # Perplexity API クライアントを取得
         client = get_perplexity_client()
@@ -531,9 +668,9 @@ async def search_recipe_from_web(
         # 全クエリの結果を格納
         all_recipes = []
         
-        # 各クエリで個別に検索
-        for i, single_query in enumerate(queries):
-            logger.info(f"クエリ {i+1}/{len(queries)}: '{single_query}'")
+        # 各献立タイトルで個別に検索
+        for i, (menu_title, single_query) in enumerate(zip(menu_titles, queries)):
+            logger.info(f"🔍 [Web検索] {i+1}/{len(queries)}: '{menu_title}' -> '{single_query}'")
             
             try:
                 # レシピ検索を実行（タイムアウト処理付き）
@@ -543,9 +680,10 @@ async def search_recipe_from_web(
                     timeout=30.0  # 30秒でタイムアウト
                 )
                 
-                # 結果にクエリ情報を追加
+                # 結果に献立タイトル情報を追加
                 for recipe in recipes:
                     recipe_data = {
+                        "menu_title": menu_title,
                         "query": single_query,
                         "title": recipe.title,
                         "url": recipe.url,
@@ -558,14 +696,15 @@ async def search_recipe_from_web(
                     }
                     all_recipes.append(recipe_data)
                 
-                logger.info(f"クエリ {i+1} 完了: {len(recipes)}件のレシピを発見")
+                logger.info(f"✅ [Web検索] {i+1} 完了: {len(recipes)}件のレシピを発見")
                 
             except asyncio.TimeoutError:
-                logger.warning(f"クエリ {i+1} タイムアウト: '{single_query}' (30秒)")
-                # タイムアウトしたクエリの結果を追加
+                logger.warning(f"⚠️ [Web検索] {i+1} タイムアウト: '{menu_title}' (30秒)")
+                # タイムアウトした献立タイトルの結果を追加
                 all_recipes.append({
+                    "menu_title": menu_title,
                     "query": single_query,
-                    "title": f"{single_query} (検索タイムアウト)",
+                    "title": f"{menu_title} (検索タイムアウト)",
                     "url": "",
                     "source": "エラー",
                     "ingredients": [],
@@ -575,11 +714,12 @@ async def search_recipe_from_web(
                     "snippet": ""
                 })
             except Exception as e:
-                logger.error(f"クエリ {i+1} エラー: {e}")
-                # エラーが発生したクエリの結果を追加
+                logger.error(f"❌ [Web検索] {i+1} エラー: {e}")
+                # エラーが発生した献立タイトルの結果を追加
                 all_recipes.append({
+                    "menu_title": menu_title,
                     "query": single_query,
-                    "title": f"{single_query} (検索エラー)",
+                    "title": f"{menu_title} (検索エラー)",
                     "url": "",
                     "source": "エラー",
                     "ingredients": [],
@@ -591,13 +731,14 @@ async def search_recipe_from_web(
         
         # レスポンス構築
         response_data = {
+            "menu_titles": menu_titles,
             "queries": queries,
-            "total_queries": len(queries),
+            "total_titles": len(menu_titles),
             "total_found": len(all_recipes),
             "recipes": all_recipes
         }
         
-        logger.info(f"Web検索完了: {len(all_recipes)}件のレシピを発見")
+        logger.info(f"✅ [Web検索] 完了: {len(all_recipes)}件のレシピを発見")
         
         return {
             "success": True,
@@ -610,6 +751,71 @@ async def search_recipe_from_web(
             "success": False,
             "error": f"Web検索エラー: {str(e)}"
         }
+
+# RAG検索実行（オプション） - ベクトル検索を使用
+        if rag_search and inventory_items:
+            logger.info(f"🔍 [並列提示] RAG検索開始: {inventory_items}")
+            
+            try:
+                # ベクトル検索インスタンスを取得
+                vector_search = get_vector_search()
+                vector_search._load_vector_db()  # ベクトルDBを読み込み
+                
+                # 在庫食材から検索クエリを生成
+                rag_query = f"{' '.join(inventory_items)} レシピ"
+                logger.info(f"🔍 [RAG検索] 検索クエリ生成: '{rag_query}'")
+                logger.info(f"🔍 [RAG検索] 検索パラメータ: k={max_results * 3}, inventory_items={inventory_items[:5]}...")
+                
+                # ベクトル検索実行
+                search_results = vector_search.search_similar_recipes(rag_query, k=max_results * 3)
+                
+                logger.info(f"🔍 [RAG検索] ベクトル検索結果: {len(search_results)}件")
+                if search_results:
+                    logger.info(f"🔍 [RAG検索] 最初の3件のタイトル: {[result.get('title', 'N/A') for result in search_results[:3]]}")
+                
+                rag_recipes = []
+                if search_results:
+                    rag_titles = []
+                    for result in search_results:
+                        title = result.get("title", "レシピ")
+                        rag_titles.append(title)
+                    
+                    # RAG検索で取得したタイトルにWeb検索を実行
+                    if rag_titles:
+                        logger.info(f"🔍 [並列提示] RAGタイトルをWeb検索: {rag_titles}")
+                        for title in rag_titles:
+                            try:
+                                web_recipes = await asyncio.wait_for(
+                                    asyncio.to_thread(perplexity_client.search_recipe, f"{title} 作り方", max_results=max_results),
+                                    timeout=30.0
+                                )
+                                
+                                for recipe in web_recipes:
+                                    recipe_data = {
+                                        "title": recipe.title,
+                                        "url": recipe.url,
+                                        "source": recipe.source,
+                                        "ingredients": recipe.ingredients,
+                                        "instructions": recipe.instructions,
+                                        "cooking_time": recipe.cooking_time,
+                                        "servings": recipe.servings,
+                                        "snippet": recipe.snippet
+                                    }
+                                    rag_recipes.append(recipe_data)
+                                
+                                logger.info(f"✅ [並列提示] RAGタイトル '{title}' のWeb検索完了: {len(web_recipes)}件")
+                                
+                            except asyncio.TimeoutError:
+                                logger.warning(f"⚠️ [並列提示] RAGタイトル '{title}' のWeb検索タイムアウト")
+                            except Exception as e:
+                                logger.error(f"❌ [並列提示] RAGタイトル '{title}' のWeb検索エラー: {e}")
+                
+                results["rag_recipes"] = rag_recipes
+                logger.info(f"✅ [並列提示] RAG検索完了: {len(rag_recipes)}件")
+                
+            except Exception as e:
+                logger.error(f"❌ [並列提示] RAG検索エラー: {e}")
+                results["rag_recipes"] = []
 
 @mcp.tool()
 async def search_recipe_integrated(
@@ -794,7 +1000,7 @@ def calculate_title_similarity(title1: str, title2: str) -> float:
 
 if __name__ == "__main__":
     print("🚀 Recipe MCP Server (stdio transport) starting...")
-    print("📡 Available tools: generate_menu_plan_with_history, search_recipe_from_rag, search_recipe_from_web, search_recipe_integrated")
+    print("📡 Available tools: generate_menu_plan_with_history, search_menu_from_rag_with_history, search_recipe_from_rag, search_recipe_from_web, search_recipe_integrated")
     print("🔗 Transport: stdio")
     print("Press Ctrl+C to stop the server")
     

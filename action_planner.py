@@ -78,287 +78,6 @@ class ActionPlanner:
         self.client = openai_client
         self.task_counter = 0
     
-    async def create_plan(self, user_request: str, available_tools: List[str]) -> List[Task]:
-        """
-        ユーザーの要求を分析し、実行可能なタスクに分解する
-        
-        Args:
-            user_request: ユーザーの要求
-            available_tools: 利用可能なツール一覧
-            
-        Returns:
-            実行可能なタスクのリスト
-        """
-        logger.info(f"🧠 [計画立案] ユーザー要求を分析: {user_request}")
-        
-        # MCPツールの説明を動的に取得（関連ツールのみ）
-        tools_description = await self._get_tools_description(available_tools, user_request)
-        
-        # LLMにタスク分解を依頼
-        
-        planning_prompt = f"""
-ユーザー要求を分析し、適切なタスクに分解してください。
-
-ユーザー要求: "{user_request}"
-
-利用可能なツール: {', '.join(available_tools)}
-
-{tools_description}
-
-重要な判断基準:
-1. **挨拶や一般的な会話の場合**: タスクは生成せず、空の配列を返す
-   - 例: "こんにちは", "おはよう", "こんばんは", "お疲れ様", "ありがとう"
-   - 例: "調子はどう？", "元気？", "今日はいい天気ですね"
-
-2. **在庫管理に関するユーザー指示の確認**: 適切なツールを選択
-   - **ユーザー指定（古い方）**: ユーザー要求に「古い方の」「古い」「最初の」キーワードがあるか確認
-   - 古い方を指示するキーワードがあれば、最古アイテムを更新/削除。
-
-   - **ユーザー指定（最新）**: ユーザー要求に「最新の」「新しい方の」「最近買った」キーワードがあるか確認
-   - 最新を指示するキーワードがあれば、最新アイテムを更新/削除。
-
-   - **ユーザー指定（全て）**: ユーザー要求に「全ての」「全部の」キーワードがあるか確認
-   - 全てを指示するキーワードがあれば、全アイテムを更新/削除。
-
-   - **ユーザー指定なし**: ユーザー要求に「古い方」「最新」「全て」の指定がない場合は、必ず`inventory_delete_by_name`または`inventory_update_by_name`を使用する。`inventory_delete_by_name_latest`、`inventory_delete_by_name_oldest`、`inventory_update_by_name_latest`、`inventory_update_by_name_oldest`は使用禁止。
-
-**重要**: 「牛乳を削除して」のような曖昧な要求では、絶対に`inventory_delete_by_name_latest`や`inventory_delete_by_name_oldest`を選択してはいけません。
-
-**具体例**:
-- 「牛乳を削除して」→ `inventory_delete_by_name`（確認プロセス発動）
-- 「古い牛乳を削除して」→ `inventory_delete_by_name_oldest`（直接削除）
-- 「最新の牛乳を削除して」→ `inventory_delete_by_name_latest`（直接削除）
-- 「全ての牛乳を削除して」→ `inventory_delete_by_name`（全削除）
-
-**禁止事項**: 曖昧な要求で`inventory_delete_by_name_latest`や`inventory_delete_by_name_oldest`を選択することは絶対に禁止です。
-
-3. **タスク生成のルール**:
-   - 削除・更新は必ずitem_idを指定
-   - 在庫状況から適切なIDを選択
-   - 異なるアイテムは個別タスクに分解
-   - 同一アイテムでも個別IDで処理
-
-**重要**: 必ず以下のJSON形式で回答してください（コメントは禁止）：
-
-{{
-    "tasks": [
-        {{
-            "id": "task1",
-            "description": "タスクの説明",
-            "tool": "使用するツール名",
-            "parameters": {{
-                "key": "value"
-            }},
-            "priority": 1,
-            "dependencies": []
-        }}
-    ]
-}}
-
-**依存関係のルール**:
-- 各タスクには一意のIDを付与してください（task1, task2, task3...）
-- 依存関係は他のタスクのIDで指定してください
-- 依存関係がない場合は空配列[]を指定
-- 複数のタスクが同じ依存関係を持つ場合は並列実行可能です
-
-**例**:
-- 在庫取得 → 献立生成: dependencies: ["inventory_fetch"]
-- 在庫取得 → 献立生成 + 買い物リスト: 献立生成と買い物リストは並列実行可能
-
-**在庫追加後の献立生成のルール**:
-- 在庫追加（inventory_add）を行った後、献立生成（generate_menu_plan_with_history）を実行する場合は、必ず在庫一覧取得（inventory_list）を間に挟む
-- 例: inventory_add → inventory_list → generate_menu_plan_with_history
-- 在庫追加と献立生成を同時に要求された場合:
-  1. inventory_add タスク（並列実行可能）
-  2. inventory_list タスク（在庫追加の依存関係）
-  3. generate_menu_plan_with_history タスク（在庫一覧の依存関係）
-
-**重要なパラメータ名**:
-- generate_menu_plan_with_history: inventory_items (必須), excluded_recipes, menu_type
-- inventory_list: パラメータなし
-- その他のツール: 各ツールの仕様に従って正しいパラメータ名を使用
-
-**パラメータ例**:
-- 献立生成: {{"inventory_items": ["鶏もも肉", "もやし", "パン"], "excluded_recipes": [], "menu_type": "和食"}}
-- 在庫一覧: {{}} (パラメータなし)
-
-**在庫追加+献立生成の具体例**:
-ユーザー要求: "牛すね肉と人参を追加して献立を教えて"
-正しいタスク構造:
-{{
-  "tasks": [
-    {{
-      "id": "task1",
-      "description": "牛すね肉を在庫に追加",
-      "tool": "inventory_add",
-      "parameters": {{"item_name": "牛すね肉", "quantity": 1}},
-      "priority": 1,
-      "dependencies": []
-    }},
-    {{
-      "id": "task2", 
-      "description": "人参を在庫に追加",
-      "tool": "inventory_add",
-      "parameters": {{"item_name": "人参", "quantity": 3}},
-      "priority": 1,
-      "dependencies": []
-    }},
-    {{
-      "id": "task3",
-      "description": "最新の在庫を取得",
-      "tool": "inventory_list", 
-      "parameters": {{}},
-      "priority": 2,
-      "dependencies": ["task1", "task2"]
-    }},
-    {{
-      "id": "task4",
-      "description": "在庫から献立を生成",
-      "tool": "generate_menu_plan_with_history",
-      "parameters": {{"inventory_items": [], "excluded_recipes": [], "menu_type": "和食"}},
-      "priority": 3,
-      "dependencies": ["task3"]
-    }}
-  ]
-}}
-
-**🚀 レシピ検索の自動追加ルール**:
-- 献立生成（generate_menu_plan_with_history）を実行する場合、自動的にレシピ検索（search_recipe_from_web）を追加
-- 献立生成の結果から料理名を抽出してレシピ検索のクエリに使用
-- 例: 献立生成 → レシピ検索（肉じゃがの作り方、味噌汁の作り方など）
-
-**レシピ検索の具体例**:
-ユーザー要求: "在庫で作れる献立とレシピを教えて"
-正しいタスク構造:
-{{
-  "tasks": [
-    {{
-      "id": "task1",
-      "description": "最新の在庫を取得",
-      "tool": "inventory_list",
-      "parameters": {{}},
-      "priority": 1,
-      "dependencies": []
-    }},
-    {{
-      "id": "task2",
-      "description": "在庫から献立を生成",
-      "tool": "generate_menu_plan_with_history",
-      "parameters": {{"inventory_items": [], "excluded_recipes": [], "menu_type": "和食"}},
-      "priority": 2,
-      "dependencies": ["task1"]
-    }},
-    {{
-      "id": "task3",
-      "description": "献立のレシピを検索",
-      "tool": "search_recipe_from_web",
-      "parameters": {{"queries": ["献立の料理名 作り方"], "max_results": 3}},
-      "priority": 3,
-      "dependencies": ["task2"]
-    }}
-  ]
-}}
-
-**JSONの注意事項**:
-- コメント（//）は絶対に使用しない
-- すべての文字列は二重引用符で囲む
-- 有効なJSON形式のみを使用
-
-ツールを利用しない場合は、親しみやすい自然言語で回答してください。
-"""
-        
-        try:
-            # トークン数予測
-            estimated_tokens = estimate_tokens(planning_prompt)
-            overage_rate = (estimated_tokens / MAX_TOKENS) * 100
-            
-            logger.info(f"🧠 [計画立案] プロンプト全文 (総トークン数: {estimated_tokens}/{MAX_TOKENS}, 超過率: {overage_rate:.1f}%):")
-            # プロンプト表示を5行に制限
-            prompt_lines = planning_prompt.split('\n')
-            if len(prompt_lines) > 5:
-                logger.info(f"🧠 [計画立案] {chr(10).join(prompt_lines[:5])}")
-                logger.info(f"🧠 [計画立案] ... (残り{len(prompt_lines)-5}行を省略)")
-            else:
-                logger.info(f"🧠 [計画立案] {planning_prompt}")
-            
-            response = self.client.chat.completions.create(
-                model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-                messages=[{"role": "user", "content": planning_prompt}],
-                max_tokens=MAX_TOKENS,
-                temperature=0.3
-            )
-            
-            result = response.choices[0].message.content
-            logger.info(f"🧠 [計画立案] LLM応答: {result}")
-            
-            # JSON解析（マークダウンのコードブロックを除去）
-            if "```json" in result:
-                # マークダウンのコードブロックを除去
-                json_start = result.find("```json") + 7
-                json_end = result.find("```", json_start)
-                if json_end != -1:
-                    result = result[json_start:json_end].strip()
-                else:
-                    # 終了の```がない場合
-                    result = result[json_start:].strip()
-            
-            # JSON解析
-            plan_data = json.loads(result)
-            tasks = []
-            
-            for task_data in plan_data.get("tasks", []):
-                # パラメータ名を正規化
-                parameters = task_data["parameters"]
-                if "item" in parameters:
-                    parameters["item_name"] = parameters.pop("item")
-                if "name" in parameters:
-                    parameters["item_name"] = parameters.pop("name")
-                
-                task = Task(
-                    id=task_data.get("id", f"task_{self.task_counter}"),
-                    description=task_data["description"],
-                    tool=task_data["tool"],
-                    parameters=parameters,
-                    priority=task_data.get("priority", 1),
-                    dependencies=task_data.get("dependencies", [])
-                )
-                tasks.append(task)
-                self.task_counter += 1
-            
-            logger.info(f"🧠 [計画立案] {len(tasks)}個のタスクを生成")
-            
-            # 不適切なタスク生成のチェック
-            if self._is_inappropriate_task_generation(user_request, tasks):
-                logger.warning(f"⚠️ [計画立案] 不適切なタスク生成を検出: {user_request}")
-                logger.warning(f"⚠️ [計画立案] 生成されたタスク数: {len(tasks)}")
-                return []  # 空のタスクリストを返す
-            
-            # Phase 2: 前提タスクの自動生成
-            tasks = self._add_prerequisite_tasks(tasks)
-            
-            return tasks
-            
-        except json.JSONDecodeError as e:
-            logger.info(f"🧠 [計画立案] LLMがシンプルなメッセージと判断: {str(e)}")
-            logger.info(f"🧠 [計画立案] LLM応答: {result[:100]}...")
-            
-            # JSON解析エラー = LLMがシンプルなメッセージと判断
-            # 空のタスク配列を返す（TrueReactAgentで_generate_simple_responseに流れる）
-            return []
-            
-        except Exception as e:
-            logger.error(f"❌ [計画立案] エラー: {str(e)}")
-            # その他のエラーの場合
-            fallback_task = Task(
-                id=f"task_{self.task_counter}",
-                description=f"ユーザー要求の処理: {user_request}",
-                tool="llm_chat",
-                parameters={"message": user_request},
-                priority=1
-            )
-            self.task_counter += 1
-            return [fallback_task]
-    
     async def _get_tools_description(self, available_tools: List[str], user_request: str = "") -> str:
         """MCPツールの説明を動的に取得（関連ツールのみ）"""
         try:
@@ -690,3 +409,338 @@ class ActionPlanner:
             logger.info(f"🔧 [前提タスク] {len(prerequisite_tasks)}個の前提タスクを追加")
         
         return enhanced_tasks
+
+    async def create_plan(self, user_request: str, available_tools: List[str]) -> List[Task]:
+        """
+        ユーザーの要求を分析し、実行可能なタスクに分解する
+        
+        Args:
+            user_request: ユーザーの要求
+            available_tools: 利用可能なツール一覧
+            
+        Returns:
+            実行可能なタスクのリスト
+        """
+        logger.info(f"🧠 [計画立案] ユーザー要求を分析: {user_request}")
+        
+        # MCPツールの説明を動的に取得（関連ツールのみ）
+        tools_description = await self._get_tools_description(available_tools, user_request)
+        
+        # LLMにタスク分解を依頼
+        
+        planning_prompt = f"""
+ユーザー要求を分析し、適切なタスクに分解してください。
+
+ユーザー要求: "{user_request}"
+
+利用可能なツール: {', '.join(available_tools)}
+
+{tools_description}
+
+**🚨 重要: 献立生成要求の場合は必ず4タスク構成を使用してください**
+
+**献立生成要求の判定基準**:
+- ユーザー要求に「献立」「レシピ」「料理」「メニュー」などのキーワードが含まれる場合
+- 在庫から料理を提案する要求の場合
+
+**献立生成要求の場合は以下の4タスク構成を必ず使用**:
+{{
+  "tasks": [
+    {{
+      "id": "task1",
+      "description": "最新の在庫を取得",
+      "tool": "inventory_list",
+      "parameters": {{}},
+      "priority": 1,
+      "dependencies": []
+    }},
+    {{
+      "id": "task2",
+      "description": "LLM推論で献立タイトル生成",
+      "tool": "generate_menu_plan_with_history",
+      "parameters": {{"inventory_items": [], "excluded_recipes": [], "menu_type": "和食"}},
+      "priority": 2,
+      "dependencies": ["task1"]
+    }},
+    {{
+      "id": "task3",
+      "description": "RAG検索で献立タイトル生成",
+      "tool": "search_menu_from_rag_with_history",
+      "parameters": {{"inventory_items": [], "excluded_recipes": [], "menu_type": "和食", "max_results": 3}},
+      "priority": 3,
+      "dependencies": ["task1"]
+    }},
+    {{
+      "id": "task4",
+      "description": "Web検索でレシピURL取得",
+      "tool": "search_recipe_from_web",
+      "parameters": {{"menu_titles": ["動的に注入される"], "max_results": 3}},
+      "priority": 4,
+      "dependencies": ["task2", "task3"]
+    }}
+  ]
+}}
+
+**重要**: 献立生成要求の場合は、上記の4タスク構成を必ず使用してください。3タスク構成は使用禁止です。
+
+重要な判定基準:
+1. **挨拶や一般的な会話の場合**: タスクは生成せず、空の配列を返す
+   - 例: "こんにちは", "おはよう", "こんばんは", "お疲れ様", "ありがとう"
+   - 例: "調子はどう？", "元気？", "今日はいい天気ですね"
+
+2. **在庫管理に関するユーザー指示の確認**: 適切なツールを選択
+   - **ユーザー指定（古い方）**: ユーザー要求に「古い方の」「古い」「最初の」キーワードがあるか確認
+   - 古い方を指示するキーワードがあれば、最古アイテムを更新/削除。
+
+   - **ユーザー指定（最新）**: ユーザー要求に「最新の」「新しい方の」「最近買った」キーワードがあるか確認
+   - 最新を指示するキーワードがあれば、最新アイテムを更新/削除。
+
+   - **ユーザー指定（全て）**: ユーザー要求に「全ての」「全部の」キーワードがあるか確認
+   - 全てを指示するキーワードがあれば、全アイテムを更新/削除。
+
+   - **ユーザー指定なし**: ユーザー要求に「古い方」「最新」「全て」の指定がない場合は、必ず`inventory_delete_by_name`または`inventory_update_by_name`を使用する。`inventory_delete_by_name_latest`、`inventory_delete_by_name_oldest`、`inventory_update_by_name_latest`、`inventory_update_by_name_oldest`は使用禁止。
+
+**重要**: 「牛乳を削除して」のような曖昧な要求では、絶対に`inventory_delete_by_name_latest`や`inventory_delete_by_name_oldest`を選択してはいけません。
+
+**具体例**:
+- 「牛乳を削除して」→ `inventory_delete_by_name`（確認プロセス発動）
+- 「古い牛乳を削除して」→ `inventory_delete_by_name_oldest`（直接削除）
+- 「最新の牛乳を削除して」→ `inventory_delete_by_name_latest`（直接削除）
+- 「全ての牛乳を削除して」→ `inventory_delete_by_name`（全削除）
+
+**禁止事項**: 曖昧な要求で`inventory_delete_by_name_latest`や`inventory_delete_by_name_oldest`を選択することは絶対に禁止です。
+
+3. **タスク生成のルール**:
+   - 削除・更新は必ずitem_idを指定
+   - 在庫状況から適切なIDを選択
+   - 異なるアイテムは個別タスクに分解
+   - 同一アイテムでも個別IDで処理
+
+**重要**: 必ず以下のJSON形式で回答してください（コメントは禁止）：
+
+{{
+    "tasks": [
+        {{
+            "id": "task1",
+            "description": "タスクの説明",
+            "tool": "使用するツール名",
+            "parameters": {{
+                "key": "value"
+            }},
+            "priority": 1,
+            "dependencies": []
+        }}
+    ]
+}}
+
+**依存関係のルール**:
+- 各タスクには一意のIDを付与してください（task1, task2, task3...）
+- 依存関係は他のタスクのIDで指定してください
+- 依存関係がない場合は空配列[]を指定
+- 複数のタスクが同じ依存関係を持つ場合は並列実行可能です
+
+**例**:
+- 在庫取得 → 献立生成: dependencies: ["inventory_fetch"]
+- 在庫取得 → 献立生成 + 買い物リスト: 献立生成と買い物リストは並列実行可能
+
+**在庫追加後の献立生成のルール**:
+- 在庫追加（inventory_add）を行った後、献立生成（generate_menu_plan_with_history）を実行する場合は、必ず在庫一覧取得（inventory_list）を間に挟む
+- 例: inventory_add → inventory_list → generate_menu_plan_with_history
+- 在庫追加と献立生成を同時に要求された場合:
+  1. inventory_add タスク（並列実行可能）
+  2. inventory_list タスク（在庫追加の依存関係）
+  3. generate_menu_plan_with_history タスク（在庫一覧の依存関係）
+
+**重要なパラメータ名**:
+- generate_menu_plan_with_history: inventory_items (必須), excluded_recipes, menu_type
+- inventory_list: パラメータなし
+- その他のツール: 各ツールの仕様に従って正しいパラメータ名を使用
+
+**パラメータ例**:
+- 献立生成: {{"inventory_items": ["鶏もも肉", "もやし", "パン"], "excluded_recipes": [], "menu_type": "和食"}}
+- 在庫一覧: {{}} (パラメータなし)
+
+**在庫追加+献立生成の具体例**:
+ユーザー要求: "牛すね肉と人参を追加して献立を教えて"
+正しいタスク構造:
+{{
+  "tasks": [
+    {{
+      "id": "task1",
+      "description": "牛すね肉を在庫に追加",
+      "tool": "inventory_add",
+      "parameters": {{"item_name": "牛すね肉", "quantity": 1}},
+      "priority": 1,
+      "dependencies": []
+    }},
+    {{
+      "id": "task2", 
+      "description": "人参を在庫に追加",
+      "tool": "inventory_add",
+      "parameters": {{"item_name": "人参", "quantity": 3}},
+      "priority": 1,
+      "dependencies": []
+    }},
+    {{
+      "id": "task3",
+      "description": "最新の在庫を取得",
+      "tool": "inventory_list", 
+      "parameters": {{}},
+      "priority": 2,
+      "dependencies": ["task1", "task2"]
+    }},
+    {{
+      "id": "task4",
+      "description": "在庫から献立を生成",
+      "tool": "generate_menu_plan_with_history",
+      "parameters": {{"inventory_items": [], "excluded_recipes": [], "menu_type": "和食"}},
+      "priority": 3,
+      "dependencies": ["task3"]
+    }}
+  ]
+}}
+
+**🚀 レシピ検索の自動追加ルール**:
+- 献立生成（generate_menu_plan_with_history）を実行する場合、自動的にレシピ検索（search_recipe_from_web）を追加
+- 献立生成の結果から料理名を抽出してレシピ検索のクエリに使用
+- 例: 献立生成 → レシピ検索（肉じゃがの作り方、味噌汁の作り方など）
+
+**レシピ検索の具体例**:
+ユーザー要求: "在庫で作れる献立とレシピを教えて"
+正しいタスク構造:
+{{
+  "tasks": [
+    {{
+      "id": "task1",
+      "description": "最新の在庫を取得",
+      "tool": "inventory_list",
+      "parameters": {{}},
+      "priority": 1,
+      "dependencies": []
+    }},
+    {{
+      "id": "task2",
+      "description": "LLM推論で献立タイトル生成",
+      "tool": "generate_menu_plan_with_history",
+      "parameters": {{"inventory_items": [], "excluded_recipes": [], "menu_type": "和食"}},
+      "priority": 2,
+      "dependencies": ["task1"]
+    }},
+    {{
+      "id": "task3",
+      "description": "RAG検索で献立タイトル生成",
+      "tool": "search_menu_from_rag_with_history",
+      "parameters": {{"inventory_items": [], "excluded_recipes": [], "menu_type": "和食", "max_results": 3}},
+      "priority": 3,
+      "dependencies": ["task1"]
+    }},
+    {{
+      "id": "task4",
+      "description": "Web検索でレシピURL取得",
+      "tool": "search_recipe_from_web",
+      "parameters": {{"menu_titles": ["動的に注入される"], "max_results": 3}},
+      "priority": 4,
+      "dependencies": ["task2", "task3"]
+    }}
+  ]
+}}
+
+**JSONの注意事項**:
+- コメント（//）は絶対に使用しない
+- すべての文字列は二重引用符で囲む
+- 有効なJSON形式のみを使用
+
+ツールを利用しない場合は、親しみやすい自然言語で回答してください。
+"""
+        
+        try:
+            # トークン数予測
+            estimated_tokens = estimate_tokens(planning_prompt)
+            overage_rate = (estimated_tokens / MAX_TOKENS) * 100
+            
+            logger.info(f"🧠 [計画立案] プロンプト全文 (総トークン数: {estimated_tokens}/{MAX_TOKENS}, 超過率: {overage_rate:.1f}%):")
+            # プロンプト表示を5行に制限
+            prompt_lines = planning_prompt.split('\n')
+            if len(prompt_lines) > 5:
+                logger.info(f"🧠 [計画立案] {chr(10).join(prompt_lines[:5])}")
+                logger.info(f"🧠 [計画立案] ... (残り{len(prompt_lines)-5}行を省略)")
+            else:
+                logger.info(f"🧠 [計画立案] {planning_prompt}")
+            
+            response = self.client.chat.completions.create(
+                model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+                messages=[{"role": "user", "content": planning_prompt}],
+                max_tokens=MAX_TOKENS,
+                temperature=0.3
+            )
+            
+            result = response.choices[0].message.content
+            logger.info(f"🧠 [計画立案] LLM応答: {result}")
+            
+            # JSON解析（マークダウンのコードブロックを除去）
+            if "```json" in result:
+                # マークダウンのコードブロックを除去
+                json_start = result.find("```json") + 7
+                json_end = result.find("```", json_start)
+                if json_end != -1:
+                    result = result[json_start:json_end].strip()
+                else:
+                    # 終了の```がない場合
+                    result = result[json_start:].strip()
+            
+            # JSON解析
+            plan_data = json.loads(result)
+            tasks = []
+            
+            for task_data in plan_data.get("tasks", []):
+                # パラメータ名を正規化
+                parameters = task_data["parameters"]
+                if "item" in parameters:
+                    parameters["item_name"] = parameters.pop("item")
+                if "name" in parameters:
+                    parameters["item_name"] = parameters.pop("name")
+                
+                task = Task(
+                    id=task_data.get("id", f"task_{self.task_counter}"),
+                    description=task_data["description"],
+                    tool=task_data["tool"],
+                    parameters=parameters,
+                    priority=task_data.get("priority", 1),
+                    dependencies=task_data.get("dependencies", [])
+                )
+                tasks.append(task)
+                self.task_counter += 1
+            
+            logger.info(f"🧠 [計画立案] {len(tasks)}個のタスクを生成")
+            
+            # 不適切なタスク生成のチェック
+            if self._is_inappropriate_task_generation(user_request, tasks):
+                logger.warning(f"⚠️ [計画立案] 不適切なタスク生成を検出: {user_request}")
+                logger.warning(f"⚠️ [計画立案] 生成されたタスク数: {len(tasks)}")
+                return []  # 空のタスクリストを返す
+            
+            # Phase 2: 前提タスクの自動生成
+            tasks = self._add_prerequisite_tasks(tasks)
+            
+            return tasks
+            
+        except json.JSONDecodeError as e:
+            logger.info(f"🧠 [計画立案] LLMがシンプルなメッセージと判断: {str(e)}")
+            logger.info(f"🧠 [計画立案] LLM応答: {result[:100]}...")
+            
+            # JSON解析エラー = LLMがシンプルなメッセージと判断
+            # 空のタスク配列を返す（TrueReactAgentで_generate_simple_responseに流れる）
+            return []
+            
+        except Exception as e:
+            logger.error(f"❌ [計画立案] エラー: {str(e)}")
+            # その他のエラーの場合
+            fallback_task = Task(
+                id=f"task_{self.task_counter}",
+                description=f"ユーザー要求の処理: {user_request}",
+                tool="llm_chat",
+                parameters={"message": user_request},
+                priority=1
+            )
+            self.task_counter += 1
+            return [fallback_task]

@@ -360,7 +360,7 @@ class TrueReactAgent:
     
     def _should_inject_inventory_data(self, task: Task, dep_result: Dict[str, Any]) -> bool:
         """
-        在庫データの注入が必要かどうかを判定
+        在庫データの注入が必要かどうかを判定（責任分離設計）
         
         Args:
             task: 現在のタスク
@@ -369,9 +369,9 @@ class TrueReactAgent:
         Returns:
             注入が必要かどうか
         """
-        # inventory_list → generate_menu_plan_with_history の組み合わせ
-        # dep_resultの構造: {"success": True, "result": {...}}
-        return (task.tool == "generate_menu_plan_with_history" and
+        # 責任分離設計: task2, task3 が在庫データを受け取る
+        return ((task.tool == "generate_menu_plan_with_history" or 
+                 task.tool == "search_menu_from_rag_with_history") and
                 dep_result.get("success") is True and
                 "result" in dep_result)
     
@@ -408,7 +408,7 @@ class TrueReactAgent:
     
     def _should_inject_menu_data(self, task: Task, dep_result: Dict[str, Any]) -> bool:
         """
-        献立データの注入が必要かどうかを判定
+        献立データの注入が必要かどうかを判定（責任分離設計）
         
         Args:
             task: 現在のタスク
@@ -417,7 +417,7 @@ class TrueReactAgent:
         Returns:
             注入が必要かどうか
         """
-        # generate_menu_plan_with_history → search_recipe_from_web の組み合わせ
+        # 責任分離設計: task4 (search_recipe_from_web) が task2, task3 の献立タイトルを受け取る
         return (task.tool == "search_recipe_from_web" and
                 dep_result.get("success") is True and
                 "result" in dep_result)
@@ -476,26 +476,53 @@ class TrueReactAgent:
             
             logger.info(f"🔄 [データフロー] 抽出された料理名一覧: {dish_names}")
             
-            # 料理名からレシピ検索クエリを構築
-            if dish_names:
-                # 各料理名に「作り方」を追加
-                search_queries = [f"{dish} 作り方" for dish in dish_names]
-                
-                # パラメータに注入
-                if "queries" in task.parameters:
-                    task.parameters["queries"] = search_queries
-                    logger.info(f"✅ [データフロー] レシピ検索クエリ配列を注入: {search_queries}")
-                elif "query" in task.parameters:
-                    # 後方互換性のため、最初のクエリのみを注入
-                    task.parameters["query"] = search_queries[0]
-                    logger.info(f"✅ [データフロー] レシピ検索クエリを注入: {search_queries[0]}")
+            # 責任分離設計: search_recipe_from_web に献立タイトルを注入
+            if task.tool == "search_recipe_from_web":
+                if dish_names:
+                    # 献立タイトルをそのまま注入（Web検索ツール内で「作り方」を付加）
+                    task.parameters["menu_titles"] = dish_names
+                    logger.info(f"✅ [データフロー] 献立タイトル注入: {dish_names}")
                 else:
-                    logger.warning(f"⚠️ [データフロー] query/queries パラメータが見つかりません")
-            else:
-                logger.warning(f"⚠️ [データフロー] 料理名を抽出できませんでした")
+                    logger.warning(f"⚠️ [データフロー] 料理名を抽出できませんでした")
                 
         except Exception as e:
             logger.error(f"❌ [データフロー] 献立データ注入エラー: {str(e)}")
+    
+    def _get_inventory_from_completed_tasks(self) -> List[str]:
+        """
+        完了したタスクから在庫データを取得
+        
+        Returns:
+            在庫アイテム名のリスト
+        """
+        try:
+            # completed_tasksから執行タスクの結果を取得
+            results = self._collect_task_results()
+            
+            for task_result in results:
+                # inventory_listタスクの結果を探す
+                if (task_result.get("description") == "最新の在庫を取得" or 
+                    "inventory_list" in task_result.get("tool", "")):
+                    
+                    result_data = task_result.get("result", {})
+                    inventory_items = result_data.get("data", [])
+                    
+                    if isinstance(inventory_items, list):
+                        item_names = []
+                        for item in inventory_items:
+                            if isinstance(item, dict) and "name" in item:
+                                item_names.append(item["name"])
+                            elif isinstance(item, dict) and "item_name" in item:
+                                item_names.append(item["item_name"])  # 他の構造も考慮
+                        logger.info(f"🔍 [データフロー] 在庫データ取得: {len(item_names)}個のアイテム")
+                        return item_names
+                    
+            logger.warning("⚠️ [データフロー] 在庫データが見つかりませんでした")
+            return []
+            
+        except Exception as e:
+            logger.error(f"❌ [データフロー] 在庫データ取得エラー: {str(e)}")
+            return []
     
     async def _react_step(self, task: Task, user_session, completed_tasks: Dict[str, Any] = None) -> Dict[str, Any]:
         """
@@ -732,7 +759,7 @@ class TrueReactAgent:
     
     async def _generate_completion_report(self, user_request: str, completed_tasks: Dict[str, Any]) -> str:
         """
-        完了報告を生成する（LLMによる最終結果整形）（Phase B: データフロー対応）
+        完了報告を生成する（並列提示システム対応）
         
         Args:
             user_request: 元のユーザー要求
@@ -742,13 +769,10 @@ class TrueReactAgent:
             完了報告
         """
         try:
-            # 1. 完了したタスクの実行結果を収集（Phase B: completed_tasksから直接取得）
-            task_results = self._collect_task_results_from_completed(completed_tasks)
+            logger.info(f"✅ [完了報告] 並列提示システム対応で生成開始: {user_request}")
             
-            # 2. LLMに最終結果の整形を依頼
-            final_response = await self._generate_final_response_with_llm(
-                user_request, task_results
-            )
+            # 1. 並列提示システム対応のレスポンス生成
+            final_response = await self._generate_final_response(completed_tasks, {})
             
             logger.info(f"✅ [完了報告] ユーザー要求: {user_request}")
             return final_response
@@ -756,6 +780,7 @@ class TrueReactAgent:
         except Exception as e:
             logger.error(f"❌ [完了報告] エラー: {str(e)}")
             # フォールバック: 従来の報告方式
+            logger.info(f"🔄 [フォールバック] 従来の報告方式にフォールバック")
             return self._generate_fallback_report(user_request)
     
     def _collect_task_results_from_completed(self, completed_tasks: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -1166,7 +1191,7 @@ class TrueReactAgent:
     
     async def _generate_final_response(self, completed_tasks: dict, confirmation_context: dict) -> str:
         """
-        最終結果の応答を生成
+        最終結果の応答を生成（並列提示システム対応）
         
         Args:
             completed_tasks: 実行済みタスクの結果
@@ -1225,52 +1250,72 @@ class TrueReactAgent:
             # 最終応答を生成
             final_response = ""
             
-            # 献立データとレシピデータを分けて処理
-            menu_data = None
-            recipe_data = None
+            # 責任分離設計: データの解析
+            llm_menu_data = None
+            rag_menu_data = None
+            web_recipe_data = None
             
             logger.info(f"🔍 [デバッグ] detailed_results: {len(detailed_results)}件")
             for i, detail in enumerate(detailed_results):
                 logger.info(f"🔍 [デバッグ] detail[{i}]: {type(detail)} - {detail}")
                 if isinstance(detail, dict):
-                    # 献立データの検出
+                    # 献立データの検出（LLMまたはRAG）
                     if 'main_dish' in detail or 'side_dish' in detail or 'soup' in detail:
                         logger.info(f"🔍 [デバッグ] 献立データ検出: {detail}")
-                        menu_data = detail
-                    # レシピデータの検出
-                    elif 'recipes' in detail:
-                        logger.info(f"🔍 [デバッグ] レシピデータ検出: {detail}")
-                        recipe_data = detail
+                        # 最初に見つかった献立データをLLM、2番目をRAGとする
+                        if llm_menu_data is None:
+                            llm_menu_data = detail
+                        elif rag_menu_data is None:
+                            rag_menu_data = detail
+                    # Web検索レシピデータの検出
+                    elif 'recipes' in detail and 'menu_titles' in detail:
+                        logger.info(f"🔍 [デバッグ] Web検索レシピデータ検出: {detail}")
+                        web_recipe_data = detail
                     # ネストされたデータの検出
                     elif 'data' in detail and isinstance(detail['data'], dict):
-                        if 'recipes' in detail['data']:
-                            logger.info(f"🔍 [デバッグ] ネストされたレシピデータ検出: {detail['data']}")
-                            recipe_data = detail['data']
+                        if 'recipes' in detail['data'] and 'menu_titles' in detail['data']:
+                            logger.info(f"🔍 [デバッグ] ネストされたWeb検索データ検出: {detail['data']}")
+                            web_recipe_data = detail['data']
                         elif 'main_dish' in detail['data'] or 'side_dish' in detail['data']:
                             logger.info(f"🔍 [デバッグ] ネストされた献立データ検出: {detail['data']}")
-                            menu_data = detail['data']
+                            if llm_menu_data is None:
+                                llm_menu_data = detail['data']
+                            elif rag_menu_data is None:
+                                rag_menu_data = detail['data']
             
-            # 献立データの表示
-            logger.info(f"🔍 [デバッグ] menu_data: {menu_data}")
-            logger.info(f"🔍 [デバッグ] recipe_data: {recipe_data}")
+            # 責任分離設計: データ有無の確認
+            logger.info(f"🔍 [デバッグ] llm_menu_data: {llm_menu_data}")
+            logger.info(f"🔍 [デバッグ] rag_menu_data: {rag_menu_data}")
+            logger.info(f"🔍 [デバッグ] web_recipe_data: {web_recipe_data}")
             
-            if menu_data:
+            # 責任分離設計の判定
+            if llm_menu_data and rag_menu_data and web_recipe_data:
+                logger.info("🚀 [並列提示] 責任分離設計で並列提示システムを実行")
+                return await self._generate_parallel_response(llm_menu_data, rag_menu_data, web_recipe_data)
+            elif llm_menu_data and web_recipe_data:
+                logger.info("🚀 [並列提示] LLM + Web検索のみで並列提示を実行")
+                # LLMのみの場合も部分的に並列提示を行う
+                return await self._generate_parallel_response(llm_menu_data, {}, web_recipe_data)
+            
+            # 従来の処理（フォールバック）
+            logger.info("🔄 [フォールバック] 従来の処理を実行")
+            if llm_menu_data:
                 final_response += "🍽️ **生成された献立**\n\n"
                 
-                if 'main_dish' in menu_data and menu_data['main_dish']:
-                    main_dish = menu_data['main_dish']
+                if 'main_dish' in llm_menu_data and llm_menu_data['main_dish']:
+                    main_dish = llm_menu_data['main_dish']
                     final_response += f"**主菜**: {main_dish.get('title', '未設定')}\n"
                     if 'ingredients' in main_dish:
                         final_response += f"  材料: {', '.join(main_dish['ingredients'])}\n"
                 
-                if 'side_dish' in menu_data and menu_data['side_dish']:
-                    side_dish = menu_data['side_dish']
+                if 'side_dish' in llm_menu_data and llm_menu_data['side_dish']:
+                    side_dish = llm_menu_data['side_dish']
                     final_response += f"**副菜**: {side_dish.get('title', '未設定')}\n"
                     if 'ingredients' in side_dish:
                         final_response += f"  材料: {', '.join(side_dish['ingredients'])}\n"
                 
-                if 'soup' in menu_data and menu_data['soup']:
-                    soup = menu_data['soup']
+                if 'soup' in llm_menu_data and llm_menu_data['soup']:
+                    soup = llm_menu_data['soup']
                     final_response += f"**汁物**: {soup.get('title', '未設定')}\n"
                     if 'ingredients' in soup:
                         final_response += f"  材料: {', '.join(soup['ingredients'])}\n"
@@ -1278,10 +1323,10 @@ class TrueReactAgent:
                 final_response += "\n"
             
             # レシピデータの表示
-            if recipe_data and 'recipes' in recipe_data:
+            if web_recipe_data and 'recipes' in web_recipe_data:
                 final_response += "🔗 **レシピリンク**\n\n"
                 
-                for i, recipe in enumerate(recipe_data['recipes'], 1):
+                for i, recipe in enumerate(web_recipe_data['recipes'], 1):
                     if isinstance(recipe, dict) and 'url' in recipe:
                         title = recipe.get('title', f'レシピ{i}')
                         url = recipe['url']
@@ -1320,4 +1365,262 @@ class TrueReactAgent:
             
         except Exception as e:
             logger.error(f"❌ [真のReAct] 最終応答生成エラー: {str(e)}")
+            return "処理が完了しました。"
+
+    async def _generate_parallel_response(self, llm_menu_data: dict, rag_menu_data: dict, web_recipe_data: dict) -> str:
+        """
+        並列提示レスポンス生成（責任分離設計）
+        
+        Args:
+            llm_menu_data: LLM生成の献立データ（task2）
+            rag_menu_data: RAG検索の献立データ（task3）
+            web_recipe_data: Web検索のレシピデータ（task4）
+            
+        Returns:
+            並列提示レスポンス
+        """
+        try:
+            logger.info("🚀 [並列提示] 責任分離設計でレスポンス生成開始")
+            
+            # 斬新な提案の生成（LLM + Web検索）
+            novel_proposal = await self._format_novel_proposal_new(llm_menu_data, web_recipe_data)
+            
+            # 伝統的な提案の生成（RAG + Web検索）
+            traditional_proposal = await self._format_traditional_proposal_new(rag_menu_data, web_recipe_data)
+            
+            # 並列提示レスポンスの構築
+            response = f"""🍽️ **献立提案（2つの選択肢）**\n\n"""
+            
+            # 斬新な提案
+            response += f"""**📝 斬新な提案（AI生成）**
+{novel_proposal}\n"""
+            
+            # 伝統的な提案
+            response += f"""**📚 伝統的な提案（蓄積レシピ）**
+{traditional_proposal}\n"""
+            
+            # ユーザー選択ヒント
+            response += """💡 **どちらの提案がお好みですか？選択してください。**
+
+- 📝 斬新な提案：独創的で新しいレシピ体験
+- 📚 伝統的な提案：実証済みで安心のレシピ
+"""
+            
+            logger.info("🚀 [並列提示] 責任分離設計でレスポンス生成完了")
+            return response
+            
+        except Exception as e:
+            logger.error(f"❌ [並列提示] エラー: {str(e)}")
+            import traceback
+            logger.error(f"❌ [並列提示] トレースバック: {traceback.format_exc()}")
+            # フォールバック: 従来の処理
+            return self._generate_fallback_single_proposal(llm_menu_data, web_recipe_data)
+
+    async def _format_novel_proposal_new(self, llm_menu_data: dict, web_recipe_data: dict) -> str:
+        """斬新な提案のフォーマット（責任分離設計）"""
+        try:
+            proposal = "🚀 **AI生成による独創的な献立**\n\n"
+            
+            dishes = ["main_dish", "side_dish", "soup"]
+            dish_names = ["主菜", "副菜", "汁物"]
+            emojis = ["🍖", "🥗", "🍵"]
+            
+            # Web検索結果からLLM献立タイトルに対応するレシピを抽出
+            recipes = web_recipe_data.get('recipes', [])
+            
+            for dish_key, dish_name, emoji in zip(dishes, dish_names, emojis):
+                if dish_key in llm_menu_data and llm_menu_data[dish_key]:
+                    dish = llm_menu_data[dish_key]
+                    dish_title = dish.get('title', '未設定')
+                    proposal += f"{emoji} **{dish_name}**: {dish_title}\n"
+                    
+                    # 対応するレシピを検索
+                    dish_recipes = [r for r in recipes if r.get('menu_title') == dish_title]
+                    
+                    for k, recipe in enumerate(dish_recipes[:3]):
+                        if isinstance(recipe, dict) and recipe.get('url'):
+                            title = recipe.get('title', f'{dish_name}レシピ{k+1}')
+                            url = recipe['url']
+                            source = recipe.get('source', '')
+                            recipe_label = f"({source})" if source else ""
+                            proposal += f"   {k+1}. [{title}{recipe_label}]({url})\n"
+                    proposal += "\n"
+            
+            proposal += "💡 **この独創的な献立をお試しください！**"
+            return proposal
+            
+        except Exception as e:
+            logger.error(f"❌ [斬新提案] フォーマットエラー: {str(e)}")
+            return "斬新な提案の生成中にエラーが発生しました。"
+
+    async def _format_traditional_proposal_new(self, rag_menu_data: dict, web_recipe_data: dict) -> str:
+        """伝統的な提案のフォーマット（責任分離設計）"""
+        try:
+            proposal = "📖 **蓄積レシピによる伝統的な献立**\n\n"
+            
+            dishes = ["main_dish", "side_dish", "soup"]
+            dish_names = ["主菜", "副菜", "汁物"]
+            emojis = ["🍖", "🥗", "🍵"]
+            
+            # Web検索結果からRAG献立タイトルに対応するレシピを抽出
+            recipes = web_recipe_data.get('recipes', [])
+            
+            for dish_key, dish_name, emoji in zip(dishes, dish_names, emojis):
+                if dish_key in rag_menu_data and rag_menu_data[dish_key]:
+                    dish = rag_menu_data[dish_key]
+                    dish_title = dish.get('title', '未設定')
+                    proposal += f"{emoji} **{dish_name}**: {dish_title}\n"
+                    
+                    # 対応するレシピを検索
+                    dish_recipes = [r for r in recipes if r.get('menu_title') == dish_title]
+                    
+                    for k, recipe in enumerate(dish_recipes[:3]):
+                        if isinstance(recipe, dict) and recipe.get('url'):
+                            title = recipe.get('title', f'{dish_name}レシピ{k+1}')
+                            url = recipe['url']
+                            source = recipe.get('source', '')
+                            recipe_label = f"({source})" if source else ""
+                            proposal += f"   {k+1}. [{title}{recipe_label}]({url})\n"
+                    proposal += "\n"
+            
+            proposal += "💡 **この伝統的な献立をお試しください！**"
+            return proposal
+            
+        except Exception as e:
+            logger.error(f"❌ [伝統提案] フォーマットエラー: {str(e)}")
+            return "伝統的な提案の生成中にエラーが発生しました。"
+
+    async def _format_novel_proposal(self, menu_data: dict, recipe_data: dict) -> str:
+        """斬新な提案のフォーマット"""
+        try:
+            proposal = "🚀 **AI生成による独創的な献立**\n\n"
+            
+            dishes = ["main_dish", "side_dish", "soup"]
+            dish_names = ["主菜", "副菜", "汁物"]
+            emojis = ["🍖", "🥗", "🍵"]
+            
+            recipe_index = 0
+            total_recipes = len(recipe_data.get('recipes', []))
+            
+            for i, (dish_key, dish_name, emoji) in enumerate(zip(dishes, dish_names, emojis)):
+                if dish_key in menu_data and menu_data[dish_key]:
+                    dish = menu_data[dish_key]
+                    proposal += f"{emoji} **{dish_name}**: {dish.get('title', '未設定')}\n"
+                    
+                    # 対応するレシピ（3つまで）
+                    dish_recipes = []
+                    for j in range(min(3, total_recipes - recipe_index)):
+                        if recipe_index < total_recipes:
+                            recipe = recipe_data['recipes'][recipe_index]
+                            dish_recipes.append(recipe)
+                            recipe_index += 1
+                    
+                    for k, recipe in enumerate(dish_recipes):
+                        if isinstance(recipe, dict) and 'url' in recipe:
+                            title = recipe.get('title', f'{dish_name}レシピ{k+1}')
+                            url = recipe['url']
+                            source = recipe.get('source', '')
+                            recipe_label = f"({source})" if source else ""
+                            proposal += f"   {k+1}. [{title}{recipe_label}]({url})\n"
+                    proposal += "\n"
+            
+            proposal += "💡 **この独創的な献立をお試しください！**"
+            return proposal
+            
+        except Exception as e:
+            logger.error(f"❌ [斬新提案] フォーマットエラー: {str(e)}")
+            return "斬新な提案の生成中にエラーが発生しました。"
+
+    async def _format_traditional_proposal(self, menu_data: dict, rag_data: dict) -> str:
+        """伝統的な提案のフォーマット（RAG検索ベース）"""
+        try:
+            proposal = "📖 **蓄積レシピによる伝統的な献立**\n\n"
+            
+            rag_recipes = rag_data.get('recipes', [])
+            
+            if not rag_recipes:
+                proposal += "⚠️ 蓄積レシピから適切な料理が見つかりませんでした。\n\n"
+                proposal += "💡 **斬新な提案をお試しください！**"
+                return proposal
+            
+            # RAG検索結果から料理カテゴリ別に分類
+            categories = {
+                "主菜": [],
+                "副菜": [], 
+                "汁物": [],
+                "その他": []
+            }
+            
+            for recipe in rag_recipes:
+                if isinstance(recipe, dict) and 'rag_origin' in recipe:
+                    category = recipe.get('category', '').lower()
+                    if 'メイン' in category or '主菜' in category or '肉' in category or '魚' in category:
+                        categories["主菜"].append(recipe)
+                    elif '副菜' in category or 'サブ' in category or '野菜' in category:
+                        categories["副菜"].append(recipe)
+                    elif '汁物' in category or 'スープ' in category or '汁' in category:
+                        categories["汁物"].append(recipe)
+                    else:
+                        categories["その他"].append(recipe)
+            
+            # 提案の構造化
+            dishes = ["主菜", "副菜", "汁物"]
+            emojis = ["🍖", "🥗", "🍵"]
+            
+            for dish_name, emoji in zip(dishes, emojis):
+                recipes = categories[dish_name]
+                if recipes:
+                    proposal += f"{emoji} **{dish_name}**: {recipes[0].get('raw_title', recipes[0].get('title', '未設定'))}\n"
+                    
+                    # 対応するレシピ（3つまで）
+                    for k, recipe in enumerate(recipes[:3]):
+                        if recipe.get('url'):
+                            title = recipe.get('title', f'{dish_name}レシピ{k+1}')
+                            url = recipe['url']
+                            source = recipe.get('source', 'Unknown')
+                            proposal += f"   {k+1}. [{title}]({url}) ({source})\n"
+                        else:
+                            title = recipe.get('title', f'{dish_name}レシピ{k+1}')
+                            proposal += f"   {k+1}. {title} (URLなし)\n"
+                    proposal += "\n"
+            
+            proposal += "💡 **この実証済み献立をお試しください！**"
+            return proposal
+            
+        except Exception as e:
+            logger.error(f"❌ [伝統提案] フォーマットエラー: {str(e)}")
+            return "伝統的な提案の生成中にエラーが発生しました。"
+
+    def _generate_fallback_single_proposal(self, menu_data: dict, recipe_data: dict) -> str:
+        """フォールバック: 単一提案"""
+        try:
+            proposal = "🍽️ **献立提案**\n\n"
+            
+            # 献立の表示
+            if menu_data:
+                dishes = ["main_dish", "side_dish", "soup"]
+                dish_names = ["主菜", "副菜", "汁物"]
+                emojis = ["🍖", "🥗", "🍵"]
+                
+                for dish_key, dish_name, emoji in zip(dishes, dish_names, emojis):
+                    if dish_key in menu_data and menu_data[dish_key]:
+                        dish = menu_data[dish_key]
+                        proposal += f"{emoji} **{dish_name}**: {dish.get('title', '未設定')}\n"
+                proposal += "\n"
+            
+            # レシピの表示
+            if recipe_data and 'recipes' in recipe_data:
+                proposal += "🔗 **フォールバック: 単一提案**\n\n"
+                for i, recipe in enumerate(recipe_data['recipes'], 1):
+                    if isinstance(recipe, dict) and 'url' in recipe:
+                        title = recipe.get('title', f'レシピ{i}')
+                        url = recipe['url']
+                        source = recipe.get('source', '')
+                        recipe_label = f"({source})" if source else ""
+                        proposal += f"{i}. [{title}{recipe_label}]({url})\n"
+            
+            return proposal
+            
+        except Exception as e:
+            logger.error(f"❌ [フォールバック] エラー: {str(e)}")
             return "処理が完了しました。"

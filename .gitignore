@@ -235,3 +235,6 @@ embeddings/
 
 # アプリログ
 morizo_ai.*
+
+# Serena AI Assistant
+.serena/
