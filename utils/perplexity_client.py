@@ -183,6 +183,11 @@ JSON形式で返してください：
         recipes = []
         
         try:
+            # レスポンスの型チェック
+            if not isinstance(response, dict):
+                logger.error(f"レスポンスが辞書型ではありません: {type(response)}")
+                return []
+            
             # レスポンスからコンテンツを取得
             content = response.get("choices", [{}])[0].get("message", {}).get("content", "")
             
@@ -213,15 +218,18 @@ JSON形式で返してください：
                         logger.warning(f"レシピ {i+1} の解析エラー: {e}")
                         continue
             
-            # 引用情報も取得
+            # 引用情報も取得（型チェック付き）
             citations = response.get("citations", [])
-            for i, citation in enumerate(citations[:max_results]):
-                if i < len(recipes):
-                    recipes[i].url = citation.get("url", recipes[i].url)
-                    recipes[i].source = citation.get("title", recipes[i].source)
+            if isinstance(citations, list):
+                for i, citation in enumerate(citations[:max_results]):
+                    if i < len(recipes) and isinstance(citation, dict):
+                        recipes[i].url = citation.get("url", recipes[i].url)
+                        recipes[i].source = citation.get("title", recipes[i].source)
             
         except Exception as e:
             logger.error(f"レスポンス解析エラー: {e}")
+            logger.error(f"レスポンス型: {type(response)}")
+            logger.error(f"レスポンス内容: {response}")
         
         return recipes
     

@@ -8,22 +8,26 @@ import logging
 
 
 def setup_log_rotation() -> str:
-    """ログローテーション設定"""
+    """ログローテーション設定（条件付き）"""
     log_file = 'morizo_ai.log'
     backup_file = 'morizo_ai.log.1'
     
-    # 既存のログファイルがある場合、バックアップを作成
+    # 既存のログファイルがある場合のみバックアップを作成
     if os.path.exists(log_file):
         try:
-            # 既存のバックアップファイルがある場合は削除
-            if os.path.exists(backup_file):
-                os.remove(backup_file)
-                print(f"🗑️ 古いバックアップログを削除: {backup_file}")
-            
-            # 現在のログファイルをバックアップに移動
-            shutil.move(log_file, backup_file)
-            print(f"📦 ログファイルをバックアップ: {log_file} → {backup_file}")
-            
+            # ファイルサイズが10MB以上の場合のみローテーション
+            file_size = os.path.getsize(log_file)
+            if file_size > 10 * 1024 * 1024:  # 10MB
+                # 既存のバックアップファイルがある場合は削除
+                if os.path.exists(backup_file):
+                    os.remove(backup_file)
+                    print(f"🗑️ 古いバックアップログを削除: {backup_file}")
+                
+                # 現在のログファイルをバックアップに移動
+                shutil.move(log_file, backup_file)
+                print(f"📦 ログファイルをバックアップ: {log_file} → {backup_file}")
+            else:
+                print(f"📝 既存のログファイルを保持: {log_file} (サイズ: {file_size/1024/1024:.1f}MB)")
         except Exception as e:
             print(f"⚠️ ログローテーション失敗: {str(e)}")
     else:
@@ -37,7 +41,7 @@ def setup_logging():
     # ログローテーション実行
     log_file = setup_log_rotation()
     
-    # ファイルハンドラー（INFOレベルのみ）
+    # ファイルハンドラー（INFOレベルで適度なログ量）
     file_handler = logging.FileHandler(log_file, encoding='utf-8', mode='a')
     file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
@@ -47,7 +51,7 @@ def setup_logging():
     console_handler.setLevel(logging.INFO)
     console_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
     
-    # ルートロガー設定（INFOレベルのみ）
+    # ルートロガー設定（INFOレベルで適度なログ量）
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.INFO)
     root_logger.addHandler(file_handler)
