@@ -59,12 +59,31 @@ class ConfirmationProcessTester:
         self.base_url = base_url
         self.client = httpx.AsyncClient(timeout=120.0)  # 30秒 → 120秒に延長
         
-        # 環境変数から認証トークンを取得
-        self.supabase_token = os.getenv("SUPABASE_ANON_KEY")
-        if not self.supabase_token:
-            logger.warning("⚠️ [確認テスト] SUPABASE_ANON_KEYが設定されていません")
-        else:
-            logger.info(f"✅ [確認テスト] 認証トークン取得完了: {self.supabase_token[:20]}...")
+        # 自動ログインで認証トークンを取得
+        try:
+            import sys
+            import os
+            from dotenv import load_dotenv
+            
+            # プロジェクトルートをパスに追加
+            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            if project_root not in sys.path:
+                sys.path.append(project_root)
+            
+            # .envファイルを読み込み
+            load_dotenv(os.path.join(project_root, '.env'))
+            
+            from auth.auto_login import get_auto_token
+            self.supabase_token = get_auto_token()
+            logger.info(f"✅ [確認テスト] 自動ログインで認証トークン取得完了: {self.supabase_token[:20]}...")
+        except Exception as e:
+            logger.warning(f"⚠️ [確認テスト] 自動ログイン失敗: {str(e)}")
+            # フォールバック: 環境変数から取得
+            self.supabase_token = os.getenv("SUPABASE_ANON_KEY")
+            if not self.supabase_token:
+                logger.warning("⚠️ [確認テスト] SUPABASE_ANON_KEYも設定されていません")
+            else:
+                logger.info(f"✅ [確認テスト] 環境変数から認証トークン取得完了: {self.supabase_token[:20]}...")
         
         logger.info("🚀 [確認テスト] Phase 4.4.3 確認プロセス検証開始")
         
