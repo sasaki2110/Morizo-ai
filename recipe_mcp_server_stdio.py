@@ -190,7 +190,7 @@ async def generate_menu_with_llm(
 【制約条件】
 1. 各料理で同じ食材を使用しない（調味料は除く）
 2. 過去のレシピを避ける: {', '.join(excluded_recipes)}
-3. 在庫食材を最大限活用する
+3. 在庫食材を最大活用する
 4. 実用的で美味しい献立にする
 
 【出力形式】
@@ -239,6 +239,7 @@ JSON形式で以下の構造で回答してください：
                     content = content[start:end].strip()
             
             menu_data = json.loads(content)
+            logger.info(f"JSON解析後の献立データ: {menu_data}")
             return menu_data
         except json.JSONDecodeError as e:
             logger.error(f"JSON解析エラー: {e}")
@@ -475,7 +476,8 @@ async def search_recipe_from_rag(
 
 @mcp.tool()
 async def search_recipe_from_web(
-    query: str,
+    query: str = None,
+    queries: List[str] = None,
     max_results: int = 3
 ) -> Dict[str, Any]:
     """Web検索によるレシピ検索（Perplexity API）
@@ -484,6 +486,7 @@ async def search_recipe_from_web(
     
     📋 パラメータ:
     - query: 検索クエリ（例: "肉じゃが 作り方", "フレンチトースト レシピ"）
+    - queries: 検索クエリの配列（例: ["肉じゃが 作り方", "味噌汁 作り方"]）
     - max_results: 取得する最大件数（デフォルト: 3）
     
     📋 JSON形式:
@@ -507,46 +510,94 @@ async def search_recipe_from_web(
     }
     """
     try:
-        logger.info(f"Web検索開始: '{query}' (最大{max_results}件)")
+        # パラメータの検証
+        if not query and not queries:
+            return {
+                "success": False,
+                "error": "queryまたはqueriesパラメータが必要です"
+            }
+        
+        # 単一クエリの場合は配列に変換
+        if query and not queries:
+            queries = [query]
+        elif query and queries:
+            queries = [query] + queries
+        
+        logger.info(f"Web検索開始: {len(queries)}個のクエリ (最大{max_results}件/クエリ)")
         
         # Perplexity API クライアントを取得
         client = get_perplexity_client()
         
-        # レシピ検索を実行（タイムアウト処理付き）
-        try:
-            import asyncio
-            recipes = await asyncio.wait_for(
-                asyncio.to_thread(client.search_recipe, query, max_results=max_results),
-                timeout=30.0  # 30秒でタイムアウト
-            )
-        except asyncio.TimeoutError:
-            logger.warning(f"Web検索タイムアウト: '{query}' (30秒)")
-            return {
-                "success": False,
-                "error": "Web検索がタイムアウトしました。しばらく時間をおいて再試行してください。"
-            }
+        # 全クエリの結果を格納
+        all_recipes = []
+        
+        # 各クエリで個別に検索
+        for i, single_query in enumerate(queries):
+            logger.info(f"クエリ {i+1}/{len(queries)}: '{single_query}'")
+            
+            try:
+                # レシピ検索を実行（タイムアウト処理付き）
+                import asyncio
+                recipes = await asyncio.wait_for(
+                    asyncio.to_thread(client.search_recipe, single_query, max_results=max_results),
+                    timeout=30.0  # 30秒でタイムアウト
+                )
+                
+                # 結果にクエリ情報を追加
+                for recipe in recipes:
+                    recipe_data = {
+                        "query": single_query,
+                        "title": recipe.title,
+                        "url": recipe.url,
+                        "source": recipe.source,
+                        "ingredients": recipe.ingredients,
+                        "instructions": recipe.instructions,
+                        "cooking_time": recipe.cooking_time,
+                        "servings": recipe.servings,
+                        "snippet": recipe.snippet
+                    }
+                    all_recipes.append(recipe_data)
+                
+                logger.info(f"クエリ {i+1} 完了: {len(recipes)}件のレシピを発見")
+                
+            except asyncio.TimeoutError:
+                logger.warning(f"クエリ {i+1} タイムアウト: '{single_query}' (30秒)")
+                # タイムアウトしたクエリの結果を追加
+                all_recipes.append({
+                    "query": single_query,
+                    "title": f"{single_query} (検索タイムアウト)",
+                    "url": "",
+                    "source": "エラー",
+                    "ingredients": [],
+                    "instructions": "検索がタイムアウトしました。しばらく時間をおいて再実行してください。",
+                    "cooking_time": "",
+                    "servings": "",
+                    "snippet": ""
+                })
+            except Exception as e:
+                logger.error(f"クエリ {i+1} エラー: {e}")
+                # エラーが発生したクエリの結果を追加
+                all_recipes.append({
+                    "query": single_query,
+                    "title": f"{single_query} (検索エラー)",
+                    "url": "",
+                    "source": "エラー",
+                    "ingredients": [],
+                    "instructions": f"検索エラー: {str(e)}",
+                    "cooking_time": "",
+                    "servings": "",
+                    "snippet": ""
+                })
         
         # レスポンス構築
         response_data = {
-            "query": query,
-            "total_found": len(recipes),
-            "recipes": []
+            "queries": queries,
+            "total_queries": len(queries),
+            "total_found": len(all_recipes),
+            "recipes": all_recipes
         }
         
-        for recipe in recipes:
-            recipe_data = {
-                "title": recipe.title,
-                "url": recipe.url,
-                "source": recipe.source,
-                "ingredients": recipe.ingredients,
-                "instructions": recipe.instructions,
-                "cooking_time": recipe.cooking_time,
-                "servings": recipe.servings,
-                "snippet": recipe.snippet
-            }
-            response_data["recipes"].append(recipe_data)
-        
-        logger.info(f"Web検索完了: {len(recipes)}件のレシピを発見")
+        logger.info(f"Web検索完了: {len(all_recipes)}件のレシピを発見")
         
         return {
             "success": True,
@@ -560,9 +611,190 @@ async def search_recipe_from_web(
             "error": f"Web検索エラー: {str(e)}"
         }
 
+@mcp.tool()
+async def search_recipe_integrated(
+    query: str,
+    max_results: int = 5,
+    rag_weight: float = 0.6,
+    web_weight: float = 0.4
+) -> Dict[str, Any]:
+    """統合レシピ検索（RAG検索 + Web検索）
+    
+    🎯 使用場面: RAG検索とWeb検索を組み合わせて最適なレシピを提案する場合
+    
+    📋 パラメータ:
+    - query: 検索クエリ（例: "肉じゃが 作り方", "フレンチトースト レシピ"）
+    - max_results: 取得する最大件数（デフォルト: 5）
+    - rag_weight: RAG検索結果の重み（デフォルト: 0.6）
+    - web_weight: Web検索結果の重み（デフォルト: 0.4）
+    
+    📋 JSON形式:
+    {
+        "success": true,
+        "data": {
+            "query": "肉じゃが 作り方",
+            "total_found": 5,
+            "rag_results": 3,
+            "web_results": 2,
+            "recipes": [
+                {
+                    "rank": 1,
+                    "title": "基本の肉じゃが",
+                    "source": "rag",
+                    "similarity_score": 0.85,
+                    "url": null,
+                    "ingredients": ["じゃがいも", "玉ねぎ", "牛肉", "だし汁"],
+                    "cooking_time": "30分",
+                    "servings": "4人分"
+                }
+            ]
+        }
+    }
+    """
+    try:
+        logger.info(f"統合検索開始: '{query}' (最大{max_results}件, RAG重み:{rag_weight}, Web重み:{web_weight})")
+        
+        # 1. RAG検索実行
+        rag_results = await search_recipe_from_rag(
+            query=query,
+            max_results=max_results * 2,  # 多めに取得してフィルタリング用
+            similarity_threshold=0.2
+        )
+        
+        # 2. Web検索実行
+        web_results = await search_recipe_from_web(
+            query=query,
+            max_results=max_results * 2  # 多めに取得してフィルタリング用
+        )
+        
+        # 3. 結果の統合
+        integrated_recipes = []
+        
+        # RAG結果の処理
+        if rag_results.get("success") and rag_results.get("data", {}).get("recipes"):
+            for recipe in rag_results["data"]["recipes"]:
+                integrated_recipe = {
+                    "title": recipe.get("title", ""),
+                    "source": "rag",
+                    "similarity_score": recipe.get("similarity_score", 0.0),
+                    "url": None,
+                    "ingredients": recipe.get("main_ingredients", "").split(", ") if recipe.get("main_ingredients") else [],
+                    "cooking_time": "記載なし",
+                    "servings": "記載なし",
+                    "category": recipe.get("category", ""),
+                    "text_preview": recipe.get("text_preview", "")
+                }
+                integrated_recipes.append(integrated_recipe)
+        
+        # Web結果の処理
+        if web_results.get("success") and web_results.get("data", {}).get("recipes"):
+            for recipe in web_results["data"]["recipes"]:
+                integrated_recipe = {
+                    "title": recipe.get("title", ""),
+                    "source": "web",
+                    "similarity_score": 0.0,  # Web検索には類似度スコアがない
+                    "url": recipe.get("url", ""),
+                    "ingredients": recipe.get("ingredients", []),
+                    "cooking_time": recipe.get("cooking_time", "記載なし"),
+                    "servings": recipe.get("servings", "記載なし"),
+                    "category": "",
+                    "text_preview": recipe.get("snippet", "")
+                }
+                integrated_recipes.append(integrated_recipe)
+        
+        # 4. 重複除去（タイトルの類似度で判定）
+        unique_recipes = []
+        for recipe in integrated_recipes:
+            is_duplicate = False
+            for existing in unique_recipes:
+                # タイトルの類似度を簡易計算
+                title_similarity = calculate_title_similarity(recipe["title"], existing["title"])
+                if title_similarity > 0.8:  # 80%以上類似している場合は重複とみなす
+                    is_duplicate = True
+                    break
+            
+            if not is_duplicate:
+                unique_recipes.append(recipe)
+        
+        # 5. 簡単なランキング（RAGスコア + Web順位）
+        for i, recipe in enumerate(unique_recipes):
+            if recipe["source"] == "rag":
+                # RAG結果: 類似度スコアを重み付け
+                recipe["rank_score"] = recipe["similarity_score"] * rag_weight
+            else:
+                # Web結果: 順位を重み付け（上位ほど高スコア）
+                web_rank = i + 1
+                recipe["rank_score"] = (1.0 / web_rank) * web_weight
+        
+        # ランキングスコアでソート
+        unique_recipes.sort(key=lambda x: x["rank_score"], reverse=True)
+        
+        # 最大件数に制限
+        final_recipes = unique_recipes[:max_results]
+        
+        # ランクを再設定
+        for i, recipe in enumerate(final_recipes, 1):
+            recipe["rank"] = i
+            # ランキングスコアは内部用なので削除
+            if "rank_score" in recipe:
+                del recipe["rank_score"]
+        
+        # レスポンス構築
+        response_data = {
+            "query": query,
+            "total_found": len(final_recipes),
+            "rag_results": len([r for r in final_recipes if r["source"] == "rag"]),
+            "web_results": len([r for r in final_recipes if r["source"] == "web"]),
+            "recipes": final_recipes
+        }
+        
+        logger.info(f"統合検索完了: {len(final_recipes)}件のレシピを発見 (RAG:{response_data['rag_results']}件, Web:{response_data['web_results']}件)")
+        
+        return {
+            "success": True,
+            "data": response_data
+        }
+        
+    except Exception as e:
+        logger.error(f"統合検索エラー: {e}")
+        return {
+            "success": False,
+            "error": f"統合検索エラー: {str(e)}"
+        }
+
+
+def calculate_title_similarity(title1: str, title2: str) -> float:
+    """タイトルの類似度を計算（簡易版）"""
+    if not title1 or not title2:
+        return 0.0
+    
+    # 文字列を小文字に変換
+    t1 = title1.lower()
+    t2 = title2.lower()
+    
+    # 完全一致
+    if t1 == t2:
+        return 1.0
+    
+    # 部分一致
+    if t1 in t2 or t2 in t1:
+        return 0.8
+    
+    # 単語レベルでの一致
+    words1 = set(t1.split())
+    words2 = set(t2.split())
+    
+    if not words1 or not words2:
+        return 0.0
+    
+    intersection = words1.intersection(words2)
+    union = words1.union(words2)
+    
+    return len(intersection) / len(union) if union else 0.0
+
 if __name__ == "__main__":
     print("🚀 Recipe MCP Server (stdio transport) starting...")
-    print("📡 Available tools: generate_menu_plan_with_history, search_recipe_from_rag, search_recipe_from_web")
+    print("📡 Available tools: generate_menu_plan_with_history, search_recipe_from_rag, search_recipe_from_web, search_recipe_integrated")
     print("🔗 Transport: stdio")
     print("Press Ctrl+C to stop the server")
     

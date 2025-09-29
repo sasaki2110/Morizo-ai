@@ -186,7 +186,7 @@ curl http://localhost:8000/health
 - ✅ **リファクタリング**: 統一されたReActエージェント（完了）
 - ✅ **Perplexity API統合**: Web検索機能（完了）
 - ✅ **Phase 4.4**: 確認プロセス（完了）
-- 🚀 **Phase 4.5**: ロールバック機能（計画中）
+- 🔄 **Phase 4.5**: ロールバック機能（低優先度・将来実装）
 
 詳細は[開発ロードマップ](docs/ROADMAP.md)と[自前ReActループ実装フロー](docs/MAKINGREACT.md)をご確認ください。
 

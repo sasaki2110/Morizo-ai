@@ -436,6 +436,7 @@ class TrueReactAgent:
             menu_data = result_data.get("data", {})
             
             logger.info(f"🔄 [データフロー] 献立データ構造確認: {type(menu_data)}")
+            logger.info(f"🔄 [データフロー] 献立データ内容: {menu_data}")
             
             # 献立から料理名を抽出
             dish_names = []
@@ -460,22 +461,36 @@ class TrueReactAgent:
                                     dish_names.append(item["name"])
                                 elif isinstance(item, str):
                                     dish_names.append(item)
+                
+                # 主菜・副菜・汁物の構造を確認
+                for dish_type in ["main_dish", "side_dish", "soup"]:
+                    if dish_type in menu_data:
+                        dish = menu_data[dish_type]
+                        logger.info(f"🔄 [データフロー] {dish_type} データ: {dish}")
+                        if isinstance(dish, dict) and "title" in dish:
+                            dish_names.append(dish["title"])
+                            logger.info(f"✅ [データフロー] {dish_type} タイトル抽出: {dish['title']}")
+                        elif isinstance(dish, str):
+                            dish_names.append(dish)
+                            logger.info(f"✅ [データフロー] {dish_type} 文字列抽出: {dish}")
+            
+            logger.info(f"🔄 [データフロー] 抽出された料理名一覧: {dish_names}")
             
             # 料理名からレシピ検索クエリを構築
             if dish_names:
-                # 料理名を「作り方」で検索するクエリに変換
-                query_parts = []
-                for dish in dish_names[:3]:  # 最大3つの料理名を使用
-                    query_parts.append(f"{dish} 作り方")
-                
-                search_query = " ".join(query_parts)
+                # 各料理名に「作り方」を追加
+                search_queries = [f"{dish} 作り方" for dish in dish_names]
                 
                 # パラメータに注入
-                if "query" in task.parameters:
-                    task.parameters["query"] = search_query
-                    logger.info(f"✅ [データフロー] レシピ検索クエリを注入: {search_query}")
+                if "queries" in task.parameters:
+                    task.parameters["queries"] = search_queries
+                    logger.info(f"✅ [データフロー] レシピ検索クエリ配列を注入: {search_queries}")
+                elif "query" in task.parameters:
+                    # 後方互換性のため、最初のクエリのみを注入
+                    task.parameters["query"] = search_queries[0]
+                    logger.info(f"✅ [データフロー] レシピ検索クエリを注入: {search_queries[0]}")
                 else:
-                    logger.warning(f"⚠️ [データフロー] query パラメータが見つかりません")
+                    logger.warning(f"⚠️ [データフロー] query/queries パラメータが見つかりません")
             else:
                 logger.warning(f"⚠️ [データフロー] 料理名を抽出できませんでした")
                 
@@ -703,7 +718,7 @@ class TrueReactAgent:
         
         # Recipe MCPツール（認証不要）
         recipe_tools = [
-            "generate_menu_plan_with_history", "search_recipe_from_rag", "search_recipe_from_web"
+            "generate_menu_plan_with_history", "search_recipe_from_rag", "search_recipe_from_web", "search_recipe_integrated"
         ]
         
         if tool_name in db_tools:
@@ -847,15 +862,32 @@ class TrueReactAgent:
 3. 推測や概算は禁止、必ず正確な計算を行う
 4. 各アイテムのquantityを一つずつ確認して合計する
 
+**レシピ検索の場合の特別指示**:
+- レシピ検索結果には必ず元のレシピURLを含めてください
+- レシピの要約や編集は行わず、元のレシピサイトへのリンクを提供してください
+- 材料、作り方、調理時間などの詳細は表示せず、URLのみを提供してください
+- 以下の形式で回答してください：
+  「詳しいレシピや手順については、以下のリンクからご確認ください。
+  [レシピタイトル - サイト名](URL)
+  ぜひお試しください！」
+
 指示:
 - 在庫リストの場合は、実際の在庫データを正確に集計して回答してください
+- レシピ検索の場合は、必ずレシピURLのみを提供してください
 - その他の場合は、実行結果を分かりやすく説明してください
 - 自然で親しみやすい日本語で回答してください
 - エラーが発生した場合は、その内容も含めて説明してください
 - タスク状況の統計情報は含めず、ユーザーが求める情報に集中してください
 """
-            logger.info(f"🔍 [LLM整形] プロンプト内容:")
-            logger.info(f"   {prompt}")
+            # プロンプト表示を5行に制限
+            prompt_lines = prompt.split('\n')
+            if len(prompt_lines) > 5:
+                logger.info(f"🔍 [LLM整形] プロンプト内容:")
+                logger.info(f"   {chr(10).join(prompt_lines[:5])}")
+                logger.info(f"   ... (残り{len(prompt_lines)-5}行を省略)")
+            else:
+                logger.info(f"🔍 [LLM整形] プロンプト内容:")
+                logger.info(f"   {prompt}")
             
             response = self.client.chat.completions.create(
                 model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),

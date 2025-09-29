@@ -59,6 +59,9 @@ def setup_logging():
     logging.getLogger('morizo_ai.ambiguity_detector').setLevel(logging.DEBUG)
     logging.getLogger('morizo_ai.session').setLevel(logging.DEBUG)
     
+    # MCP関連のログをINFOレベルに設定（デバッグ用）
+    logging.getLogger('morizo_ai.mcp').setLevel(logging.INFO)
+    
     # FastMCPのログを抑制
     logging.getLogger('mcp').setLevel(logging.WARNING)
     logging.getLogger('mcp.client').setLevel(logging.WARNING)
