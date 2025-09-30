@@ -48,20 +48,17 @@ try:
     
     # 既存のログハンドラーをクリア（競合回避）
     root_logger = logging.getLogger()
-    for handler in root_logger.handlers[:]:
-        root_logger.removeHandler(handler)
-        handler.close()
     
-    # プロジェクトのログ設定を適用
-    logger = setup_logging()
-    logger.info("🔧 [recipe_mcp] プロジェクトの統一されたログ設定を使用")
-    
-    # ログハンドラーのフラッシュを強制
-    for handler in root_logger.handlers:
-        if hasattr(handler, 'flush'):
-            handler.flush()
-    
-    logger.info("🔧 [recipe_mcp] ログ設定を再適用完了（競合回避版）")
+    # ログハンドラーが既に設定されている場合は再設定をスキップ
+    if not root_logger.handlers:
+        # プロジェクトのログ設定を適用
+        logger = setup_logging()
+        logger.info("🔧 [recipe_mcp] プロジェクトの統一されたログ設定を使用")
+        logger.info("🔧 [recipe_mcp] ログ設定を再適用完了（競合回避版）")
+    else:
+        # 既存のログ設定を使用
+        logger = logging.getLogger('morizo_ai')
+        logger.info("🔧 [recipe_mcp] 既存のログ設定を使用（再設定スキップ）")
     
 except ImportError as e:
     # フォールバック: 基本的なログ設定

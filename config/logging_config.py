@@ -32,8 +32,19 @@ def setup_log_rotation() -> str:
     return log_file
 
 
+# ログ設定の状態管理
+_logging_configured = False
+
 def setup_logging():
     """ログ設定を初期化"""
+    global _logging_configured
+    
+    # 既に設定済みの場合はスキップ
+    if _logging_configured:
+        logger = logging.getLogger('morizo_ai')
+        logger.info("🔧 [ログ設定] 既に設定済みのためスキップ")
+        return logger
+    
     # ログローテーション実行
     log_file = setup_log_rotation()
     
@@ -41,6 +52,8 @@ def setup_logging():
     file_handler = logging.FileHandler(log_file, encoding='utf-8', mode='a')
     file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+    # ログの即座フラッシュを有効化
+    file_handler.stream.flush()
     
     # コンソールハンドラー（INFOレベルのみ）
     console_handler = logging.StreamHandler()
@@ -75,5 +88,8 @@ def setup_logging():
     # ログテスト
     logger = logging.getLogger('morizo_ai')
     logger.info("🚀 Morizo AI アプリケーション起動 - ログテスト")
+    
+    # 設定完了フラグを設定
+    _logging_configured = True
     
     return logger

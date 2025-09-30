@@ -20,6 +20,7 @@ from ambiguity_detector import AmbiguityDetector
 from confirmation_processor import ConfirmationProcessor
 from confirmation_exceptions import UserConfirmationRequired
 from task_chain_manager import TaskChainManager
+from recipe_mcp_server_stdio import detect_ingredient_duplication_internal
 
 logger = logging.getLogger("morizo_ai.true_react")
 
@@ -332,7 +333,7 @@ class TrueReactAgent:
         if not task.dependencies or not completed_tasks:
             return task
         
-        logger.debug(f"🔄 [データフロー] {task.id} の依存関係結果を注入開始")
+        logger.info(f"🔄 [データフロー] {task.id} の依存関係結果を注入開始")
         
         # タスクのコピーを作成（元のタスクを変更しない）
         enhanced_task = Task(
@@ -348,12 +349,12 @@ class TrueReactAgent:
         for dep_id in task.dependencies:
             if dep_id in completed_tasks:
                 dep_result = completed_tasks[dep_id]
-                logger.debug(f"🔄 [データフロー] {dep_id} の結果を {task.id} に注入")
+                logger.info(f"🔄 [データフロー] {dep_id} の結果を {task.id} に注入")
                 
                 # 特定のツール組み合わせに対するデータフロー処理
                 if self._should_inject_inventory_data(task, dep_result):
                     self._inject_inventory_data(enhanced_task, dep_result)
-                elif self._should_inject_menu_data(task, dep_result):
+                if self._should_inject_menu_data(task, dep_result):
                     self._inject_menu_data(enhanced_task, dep_result)
         
         return enhanced_task
@@ -435,8 +436,8 @@ class TrueReactAgent:
             result_data = dep_result.get("result", {})
             menu_data = result_data.get("data", {})
             
-            logger.debug(f"🔄 [データフロー] 献立データ構造確認: {type(menu_data)}")
-            logger.debug(f"🔄 [データフロー] 献立データ内容: {menu_data}")
+            logger.info(f"🔄 [データフロー] 献立データ構造確認: {type(menu_data)}")
+            logger.info(f"🔄 [データフロー] 献立データ内容: {menu_data}")
             
             # 献立から料理名を抽出
             dish_names = []
@@ -466,22 +467,30 @@ class TrueReactAgent:
                 for dish_type in ["main_dish", "side_dish", "soup"]:
                     if dish_type in menu_data:
                         dish = menu_data[dish_type]
-                        logger.debug(f"🔄 [データフロー] {dish_type} データ: {dish}")
+                        logger.info(f"🔄 [データフロー] {dish_type} データ: {dish}")
                         if isinstance(dish, dict) and "title" in dish:
                             dish_names.append(dish["title"])
-                            logger.debug(f"✅ [データフロー] {dish_type} タイトル抽出: {dish['title']}")
+                            logger.info(f"✅ [データフロー] {dish_type} タイトル抽出: {dish['title']}")
                         elif isinstance(dish, str):
                             dish_names.append(dish)
-                            logger.debug(f"✅ [データフロー] {dish_type} 文字列抽出: {dish}")
+                            logger.info(f"✅ [データフロー] {dish_type} 文字列抽出: {dish}")
             
-            logger.debug(f"🔄 [データフロー] 抽出された料理名一覧: {dish_names}")
+            logger.info(f"🔄 [データフロー] 抽出された料理名一覧: {dish_names}")
             
             # 責任分離設計: search_recipe_from_web に献立タイトルを注入
             if task.tool == "search_recipe_from_web":
                 if dish_names:
-                    # 献立タイトルをそのまま注入（Web検索ツール内で「作り方」を付加）
-                    task.parameters["menu_titles"] = dish_names
-                    logger.debug(f"✅ [データフロー] 献立タイトル注入: {dish_names}")
+                    # 既存のmenu_titlesがある場合は追加、ない場合は新規作成
+                    existing_titles = task.parameters.get("menu_titles", [])
+                    if existing_titles:
+                        # 既存のタイトルと新しいタイトルを統合（重複除去）
+                        combined_titles = list(set(existing_titles + dish_names))
+                        task.parameters["menu_titles"] = combined_titles
+                        logger.info(f"✅ [データフロー] 献立タイトル統合: {existing_titles} + {dish_names} = {combined_titles}")
+                    else:
+                        # 新規作成
+                        task.parameters["menu_titles"] = dish_names
+                        logger.info(f"✅ [データフロー] 献立タイトル注入: {dish_names}")
                 else:
                     logger.warning(f"⚠️ [データフロー] 料理名を抽出できませんでした")
                 
@@ -1382,22 +1391,37 @@ class TrueReactAgent:
         try:
             logger.info("🚀 [並列提示] 責任分離設計でレスポンス生成開始")
             
+            # ログを即座にフラッシュ
+            for handler in logger.handlers:
+                handler.flush()
+            
+            # 食材重複制約を適用
+            optimized_llm_data, optimized_rag_data = await self._apply_ingredient_constraints(
+                llm_menu_data, rag_menu_data
+            )
+            
             # 斬新な提案の生成（LLM + Web検索）
-            novel_proposal = await self._format_novel_proposal_new(llm_menu_data, web_recipe_data)
+            novel_proposal = await self._format_novel_proposal_new(optimized_llm_data, web_recipe_data)
             
             # 伝統的な提案の生成（RAG + Web検索）
-            traditional_proposal = await self._format_traditional_proposal_new(rag_menu_data, web_recipe_data)
+            traditional_proposal = await self._format_traditional_proposal_new(optimized_rag_data, web_recipe_data)
             
             # 並列提示レスポンスの構築
-            response = f"""🍽️ **献立提案（2つの選択肢）**\n\n"""
+            response = f"""🍽️ **献立提案（2つの選択肢）**
+
+"""
             
             # 斬新な提案
             response += f"""**📝 斬新な提案（AI生成）**
-{novel_proposal}\n"""
+{novel_proposal}
+
+"""
             
             # 伝統的な提案
             response += f"""**📚 伝統的な提案（蓄積レシピ）**
-{traditional_proposal}\n"""
+{traditional_proposal}
+
+"""
             
             # ユーザー選択ヒント
             response += """💡 **どちらの提案がお好みですか？選択してください。**
@@ -1407,6 +1431,11 @@ class TrueReactAgent:
 """
             
             logger.info("🚀 [並列提示] 責任分離設計でレスポンス生成完了")
+            
+            # ログを即座にフラッシュ
+            for handler in logger.handlers:
+                handler.flush()
+            
             return response
             
         except Exception as e:
@@ -1415,6 +1444,281 @@ class TrueReactAgent:
             logger.error(f"❌ [並列提示] トレースバック: {traceback.format_exc()}")
             # フォールバック: 従来の処理
             return self._generate_fallback_single_proposal(llm_menu_data, web_recipe_data)
+
+    async def _apply_ingredient_constraints(self, llm_menu_data: dict, rag_menu_data: dict) -> tuple:
+        """
+        食材重複制約を適用して最適な献立を選択
+        
+        Args:
+            llm_menu_data: LLM生成の献立データ
+            rag_menu_data: RAG検索の献立データ
+            
+        Returns:
+            (最適化されたLLMデータ, 最適化されたRAGデータ)
+        """
+        try:
+            logger.info("🔍 [制約適用] 食材重複制約の適用開始")
+            
+            # LLMデータの重複チェック
+            llm_duplication = detect_ingredient_duplication_internal(llm_menu_data)
+            rag_duplication = detect_ingredient_duplication_internal(rag_menu_data)
+            
+            logger.info(f"🔍 [制約適用] LLM重複: {llm_duplication['has_duplication']}")
+            logger.info(f"🔍 [制約適用] RAG重複: {rag_duplication['has_duplication']}")
+            
+            # ログを即座にフラッシュ
+            for handler in logger.handlers:
+                handler.flush()
+            
+            # 重複がない場合はそのまま返す
+            if not llm_duplication['has_duplication'] and not rag_duplication['has_duplication']:
+                logger.info("✅ [制約適用] 両方の献立で重複なし")
+                return llm_menu_data, rag_menu_data
+            
+            # 重複がある場合の処理
+            optimized_llm_data = llm_menu_data.copy()
+            optimized_rag_data = rag_menu_data.copy()
+            
+            # LLMデータの重複を修正
+            if llm_duplication['has_duplication']:
+                logger.warning(f"⚠️ [制約適用] LLMデータの重複を修正: {llm_duplication['duplicated_ingredients']}")
+                optimized_llm_data = await self._fix_ingredient_duplication(optimized_llm_data, llm_duplication)
+            
+            # RAGデータの重複を修正
+            if rag_duplication['has_duplication']:
+                logger.warning(f"⚠️ [制約適用] RAGデータの重複を修正: {rag_duplication['duplicated_ingredients']}")
+                optimized_rag_data = await self._fix_ingredient_duplication(optimized_rag_data, rag_duplication)
+            
+            # ログを即座にフラッシュ
+            for handler in logger.handlers:
+                handler.flush()
+            
+            logger.info("✅ [制約適用] 食材重複制約の適用完了")
+            return optimized_llm_data, optimized_rag_data
+            
+        except Exception as e:
+            logger.error(f"❌ [制約適用] エラー: {str(e)}")
+            return llm_menu_data, rag_menu_data
+    
+    async def _fix_ingredient_duplication(self, menu_data: dict, duplication_info: dict) -> dict:
+        """
+        重複食材を使わない代替料理に置き換え
+        
+        Args:
+            menu_data: 献立データ
+            duplication_info: 重複情報
+            
+        Returns:
+            置き換え後の献立データ
+        """
+        try:
+            fixed_data = menu_data.copy()
+            duplicated_ingredients = [item[0] for item in duplication_info['duplicated_ingredients']]
+            
+            logger.info(f"🔄 [料理置き換え] 重複食材: {duplicated_ingredients}")
+            
+            # 重複している料理を特定して置き換え
+            for duplication in duplication_info['duplicated_ingredients']:
+                ingredient = duplication[0]
+                dish_pair = duplication[1]  # '主菜-副菜' など
+                
+                logger.info(f"🔄 [料理置き換え] 重複ペア: {dish_pair} (食材: {ingredient})")
+                
+                # 副菜が重複している場合
+                if '副菜' in dish_pair and 'side_dish' in fixed_data:
+                    original_title = fixed_data['side_dish']['title']
+                    alternative_dish = await self._find_alternative_dish(
+                        menu_data, 'side_dish', duplicated_ingredients
+                    )
+                    if alternative_dish:
+                        fixed_data['side_dish'] = alternative_dish
+                        logger.info(f"🔄 [料理置き換え] 副菜を置き換え: {original_title} -> {alternative_dish['title']}")
+                    else:
+                        logger.warning(f"⚠️ [料理置き換え] 副菜の代替料理が見つかりませんでした")
+                
+                # 汁物が重複している場合
+                if '汁物' in dish_pair and 'soup' in fixed_data:
+                    original_title = fixed_data['soup']['title']
+                    alternative_dish = await self._find_alternative_dish(
+                        menu_data, 'soup', duplicated_ingredients
+                    )
+                    if alternative_dish:
+                        fixed_data['soup'] = alternative_dish
+                        logger.info(f"🔄 [料理置き換え] 汁物を置き換え: {original_title} -> {alternative_dish['title']}")
+                    else:
+                        logger.warning(f"⚠️ [料理置き換え] 汁物の代替料理が見つかりませんでした")
+            
+            return fixed_data
+            
+        except Exception as e:
+            logger.error(f"❌ [料理置き換え] エラー: {str(e)}")
+            return menu_data
+
+    async def _find_alternative_dish(self, original_menu_data: dict, dish_type: str, excluded_ingredients: list) -> dict:
+        """
+        重複食材を使わない代替料理を検索
+        
+        Args:
+            original_menu_data: 元の献立データ
+            dish_type: 料理の種類 ('side_dish', 'soup')
+            excluded_ingredients: 除外する食材
+            
+        Returns:
+            代替料理データ
+        """
+        try:
+            logger.info(f"🔍 [代替料理検索] 開始: {dish_type}, 除外食材: {excluded_ingredients}")
+            
+            # 1. 在庫食材から除外食材を除去
+            inventory_items = self._get_inventory_from_completed_tasks()
+            available_ingredients = [item for item in inventory_items if item not in excluded_ingredients]
+            
+            logger.info(f"🔍 [代替料理検索] 利用可能食材: {available_ingredients}")
+            
+            # 2. RAG検索で代替料理を検索
+            alternative_result = await self._search_alternative_dish_rag(
+                available_ingredients, dish_type, original_menu_data
+            )
+            
+            # 3. 制約を満たす料理を選択
+            if alternative_result and 'data' in alternative_result:
+                alternative_menu = alternative_result['data']
+                if dish_type in alternative_menu:
+                    alternative_dish = alternative_menu[dish_type]
+                    
+                    # 4. 除外食材を使っていないかチェック
+                    dish_ingredients = alternative_dish.get('ingredients', [])
+                    if not any(ingredient in excluded_ingredients for ingredient in dish_ingredients):
+                        logger.info(f"✅ [代替料理検索] 成功: {alternative_dish['title']}")
+                        return alternative_dish
+                    else:
+                        logger.warning(f"⚠️ [代替料理検索] 除外食材を使用: {alternative_dish['title']}")
+            
+            # 5. RAG検索で適切な料理が見つからない場合、手動で代替料理を選択
+            logger.info(f"🔍 [代替料理検索] 手動代替料理選択を開始")
+            manual_alternative = self._select_manual_alternative_dish(dish_type, available_ingredients, excluded_ingredients)
+            if manual_alternative:
+                logger.info(f"✅ [代替料理検索] 手動選択成功: {manual_alternative['title']}")
+                return manual_alternative
+            
+            logger.warning(f"⚠️ [代替料理検索] 代替料理が見つかりませんでした")
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ [代替料理検索] エラー: {str(e)}")
+            return None
+
+    async def _search_alternative_dish_rag(self, available_ingredients: list, dish_type: str, original_menu_data: dict) -> dict:
+        """
+        RAG検索で代替料理を検索
+        
+        Args:
+            available_ingredients: 利用可能な食材
+            dish_type: 料理の種類
+            original_menu_data: 元の献立データ
+            
+        Returns:
+            代替料理検索結果
+        """
+        try:
+            logger.info(f"🔍 [RAG再検索] 開始: {dish_type}")
+            
+            # 除外レシピリストを作成（元の献立の料理を除外）
+            excluded_recipes = []
+            for dish_key in ['main_dish', 'side_dish', 'soup']:
+                if dish_key in original_menu_data and original_menu_data[dish_key]:
+                    excluded_recipes.append(original_menu_data[dish_key]['title'])
+            
+            logger.info(f"🔍 [RAG再検索] 除外レシピ: {excluded_recipes}")
+            
+            # RAG検索を実行
+            from agents.mcp_client import call_mcp_tool
+            result = await call_mcp_tool(
+                "search_menu_from_rag_with_history",
+                {
+                    "inventory_items": available_ingredients,
+                    "excluded_recipes": excluded_recipes,
+                    "menu_type": "和食",
+                    "max_results": 1  # 1件のみ取得
+                }
+            )
+            
+            logger.info(f"✅ [RAG再検索] 完了: {dish_type}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"❌ [RAG再検索] エラー: {str(e)}")
+            return None
+
+    def _select_manual_alternative_dish(self, dish_type: str, available_ingredients: list, excluded_ingredients: list) -> dict:
+        """
+        手動で代替料理を選択
+        
+        Args:
+            dish_type: 料理の種類
+            available_ingredients: 利用可能な食材
+            excluded_ingredients: 除外する食材
+            
+        Returns:
+            代替料理データ
+        """
+        try:
+            logger.info(f"🔍 [手動選択] 開始: {dish_type}")
+            
+            # 副菜の手動選択
+            if dish_type == 'side_dish':
+                # もやしを使った副菜
+                if 'もやし' in available_ingredients:
+                    return {
+                        'title': 'もやしのナムル',
+                        'ingredients': ['もやし'],
+                        'source': '手動選択'
+                    }
+                # 人参を使った副菜
+                elif '人参' in available_ingredients:
+                    return {
+                        'title': '人参のきんぴら',
+                        'ingredients': ['人参'],
+                        'source': '手動選択'
+                    }
+                # 牛乳を使った副菜
+                elif '牛乳' in available_ingredients:
+                    return {
+                        'title': '牛乳プリン',
+                        'ingredients': ['牛乳'],
+                        'source': '手動選択'
+                    }
+            
+            # 汁物の手動選択
+            elif dish_type == 'soup':
+                # 豆腐を使った汁物
+                if '豆腐' in available_ingredients:
+                    return {
+                        'title': '豆腐の味噌汁',
+                        'ingredients': ['豆腐'],
+                        'source': '手動選択'
+                    }
+                # 牛乳を使った汁物
+                elif '牛乳' in available_ingredients:
+                    return {
+                        'title': '牛乳スープ',
+                        'ingredients': ['牛乳'],
+                        'source': '手動選択'
+                    }
+                # もやしを使った汁物
+                elif 'もやし' in available_ingredients:
+                    return {
+                        'title': 'もやしの味噌汁',
+                        'ingredients': ['もやし'],
+                        'source': '手動選択'
+                    }
+            
+            logger.warning(f"⚠️ [手動選択] 適切な代替料理が見つかりませんでした")
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ [手動選択] エラー: {str(e)}")
+            return None
 
     async def _format_novel_proposal_new(self, llm_menu_data: dict, web_recipe_data: dict) -> str:
         """斬新な提案のフォーマット（責任分離設計）"""
@@ -1434,8 +1738,16 @@ class TrueReactAgent:
                     dish_title = dish.get('title', '未設定')
                     proposal += f"{emoji} **{dish_name}**: {dish_title}\n"
                     
-                    # 対応するレシピを検索
+                    # 対応するレシピを検索（menu_titleでマッチング）
                     dish_recipes = [r for r in recipes if r.get('menu_title') == dish_title]
+                    
+                    # レシピが見つからない場合は、タイトルの部分一致で検索
+                    if not dish_recipes:
+                        dish_recipes = [r for r in recipes if dish_title in r.get('title', '')]
+                    
+                    # レシピが見つからない場合は、クエリの部分一致で検索
+                    if not dish_recipes:
+                        dish_recipes = [r for r in recipes if dish_title in r.get('query', '')]
                     
                     for k, recipe in enumerate(dish_recipes[:3]):
                         if isinstance(recipe, dict) and recipe.get('url'):
@@ -1444,6 +1756,12 @@ class TrueReactAgent:
                             source = recipe.get('source', '')
                             recipe_label = f"({source})" if source else ""
                             proposal += f"   {k+1}. [{title}{recipe_label}]({url})\n"
+                    
+                    # レシピが見つからない場合のログ出力
+                    if not dish_recipes:
+                        logger.warning(f"⚠️ [斬新提案] レシピが見つかりません: {dish_title}")
+                        proposal += f"   ※ {dish_title}のレシピが見つかりませんでした\n"
+                    
                     proposal += "\n"
             
             proposal += "💡 **この独創的な献立をお試しください！**"
@@ -1471,8 +1789,16 @@ class TrueReactAgent:
                     dish_title = dish.get('title', '未設定')
                     proposal += f"{emoji} **{dish_name}**: {dish_title}\n"
                     
-                    # 対応するレシピを検索
+                    # 対応するレシピを検索（menu_titleでマッチング）
                     dish_recipes = [r for r in recipes if r.get('menu_title') == dish_title]
+                    
+                    # レシピが見つからない場合は、タイトルの部分一致で検索
+                    if not dish_recipes:
+                        dish_recipes = [r for r in recipes if dish_title in r.get('title', '')]
+                    
+                    # レシピが見つからない場合は、クエリの部分一致で検索
+                    if not dish_recipes:
+                        dish_recipes = [r for r in recipes if dish_title in r.get('query', '')]
                     
                     for k, recipe in enumerate(dish_recipes[:3]):
                         if isinstance(recipe, dict) and recipe.get('url'):
@@ -1481,6 +1807,12 @@ class TrueReactAgent:
                             source = recipe.get('source', '')
                             recipe_label = f"({source})" if source else ""
                             proposal += f"   {k+1}. [{title}{recipe_label}]({url})\n"
+                    
+                    # レシピが見つからない場合のログ出力
+                    if not dish_recipes:
+                        logger.warning(f"⚠️ [伝統提案] レシピが見つかりません: {dish_title}")
+                        proposal += f"   ※ {dish_title}のレシピが見つかりませんでした\n"
+                    
                     proposal += "\n"
             
             proposal += "💡 **この伝統的な献立をお試しください！**"
