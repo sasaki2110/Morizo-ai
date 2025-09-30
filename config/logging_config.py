@@ -60,11 +60,15 @@ def setup_logging():
     console_handler.setLevel(logging.INFO)
     console_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
     
-    # ルートロガー設定（INFOレベルで適度なログ量）
+    # morizo_aiロガー設定（重複回避のためルートロガーには追加しない）
+    morizo_logger = logging.getLogger('morizo_ai')
+    morizo_logger.setLevel(logging.INFO)
+    morizo_logger.addHandler(file_handler)
+    morizo_logger.addHandler(console_handler)
+    
+    # ルートロガーはレベル設定のみ（ハンドラーは追加しない）
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.INFO)
-    root_logger.addHandler(file_handler)
-    root_logger.addHandler(console_handler)
     
     # 個別ロガーはDEBUGレベルに設定（ファイルには出力されない）
     logging.getLogger('morizo_ai.planner').setLevel(logging.DEBUG)
@@ -88,6 +92,7 @@ def setup_logging():
     # ログテスト
     logger = logging.getLogger('morizo_ai')
     logger.info("🚀 Morizo AI アプリケーション起動 - ログテスト")
+    logger.info(f"🔧 [ログ設定] morizo_aiロガー設定完了: レベル={logger.level}, ハンドラー={len(logger.handlers)}")
     
     # 設定完了フラグを設定
     _logging_configured = True
