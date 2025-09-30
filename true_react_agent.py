@@ -745,7 +745,7 @@ class TrueReactAgent:
         
         # Recipe MCPツール（認証不要）
         recipe_tools = [
-            "generate_menu_plan_with_history", "search_recipe_from_rag", "search_recipe_from_web", "search_recipe_integrated"
+            "generate_menu_plan_with_history", "search_menu_from_rag_with_history", "search_recipe_from_web"
         ]
         
         if tool_name in db_tools:

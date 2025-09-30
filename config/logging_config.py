@@ -8,26 +8,22 @@ import logging
 
 
 def setup_log_rotation() -> str:
-    """ログローテーション設定（条件付き）"""
+    """ログローテーション設定（無条件実行）"""
     log_file = 'morizo_ai.log'
     backup_file = 'morizo_ai.log.1'
     
-    # 既存のログファイルがある場合のみバックアップを作成
+    # 既存のログファイルがある場合は無条件でバックアップを作成
     if os.path.exists(log_file):
         try:
-            # ファイルサイズが10MB以上の場合のみローテーション
-            file_size = os.path.getsize(log_file)
-            if file_size > 10 * 1024 * 1024:  # 10MB
-                # 既存のバックアップファイルがある場合は削除
-                if os.path.exists(backup_file):
-                    os.remove(backup_file)
-                    print(f"🗑️ 古いバックアップログを削除: {backup_file}")
-                
-                # 現在のログファイルをバックアップに移動
-                shutil.move(log_file, backup_file)
-                print(f"📦 ログファイルをバックアップ: {log_file} → {backup_file}")
-            else:
-                print(f"📝 既存のログファイルを保持: {log_file} (サイズ: {file_size/1024/1024:.1f}MB)")
+            # 既存のバックアップファイルがある場合は削除
+            if os.path.exists(backup_file):
+                os.remove(backup_file)
+                print(f"🗑️ 古いバックアップログを削除: {backup_file}")
+            
+            # 現在のログファイルをバックアップに移動（無条件）
+            shutil.move(log_file, backup_file)
+            file_size = os.path.getsize(backup_file)
+            print(f"📦 ログファイルをバックアップ: {log_file} → {backup_file} (サイズ: {file_size/1024/1024:.1f}MB)")
         except Exception as e:
             print(f"⚠️ ログローテーション失敗: {str(e)}")
     else:
