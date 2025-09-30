@@ -474,7 +474,7 @@ class ActionPlanner:
       "id": "task4",
       "description": "Web検索でレシピURL取得",
       "tool": "search_recipe_from_web",
-      "parameters": {{"menu_titles": ["動的に注入される"], "max_results": 3}},
+      "parameters": {{"menu_titles": [], "max_results": 3}},
       "priority": 4,
       "dependencies": ["task2", "task3"]
     }}
@@ -638,7 +638,7 @@ class ActionPlanner:
       "id": "task4",
       "description": "Web検索でレシピURL取得",
       "tool": "search_recipe_from_web",
-      "parameters": {{"menu_titles": ["動的に注入される"], "max_results": 3}},
+      "parameters": {{"menu_titles": [], "max_results": 3}},
       "priority": 4,
       "dependencies": ["task2", "task3"]
     }}

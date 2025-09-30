@@ -1395,10 +1395,9 @@ class TrueReactAgent:
             for handler in logger.handlers:
                 handler.flush()
             
-            # 食材重複制約を適用
-            optimized_llm_data, optimized_rag_data = await self._apply_ingredient_constraints(
-                llm_menu_data, rag_menu_data
-            )
+            # recipe_mcpの制約解決エンジンで既に重複回避済みのため、そのまま使用
+            optimized_llm_data = llm_menu_data
+            optimized_rag_data = rag_menu_data
             
             # 斬新な提案の生成（LLM + Web検索）
             novel_proposal = await self._format_novel_proposal_new(optimized_llm_data, web_recipe_data)
@@ -1445,116 +1444,7 @@ class TrueReactAgent:
             # フォールバック: 従来の処理
             return self._generate_fallback_single_proposal(llm_menu_data, web_recipe_data)
 
-    async def _apply_ingredient_constraints(self, llm_menu_data: dict, rag_menu_data: dict) -> tuple:
-        """
-        食材重複制約を適用して最適な献立を選択
-        
-        Args:
-            llm_menu_data: LLM生成の献立データ
-            rag_menu_data: RAG検索の献立データ
-            
-        Returns:
-            (最適化されたLLMデータ, 最適化されたRAGデータ)
-        """
-        try:
-            logger.info("🔍 [制約適用] 食材重複制約の適用開始")
-            
-            # LLMデータの重複チェック
-            llm_duplication = detect_ingredient_duplication_internal(llm_menu_data)
-            rag_duplication = detect_ingredient_duplication_internal(rag_menu_data)
-            
-            logger.info(f"🔍 [制約適用] LLM重複: {llm_duplication['has_duplication']}")
-            logger.info(f"🔍 [制約適用] RAG重複: {rag_duplication['has_duplication']}")
-            
-            # ログを即座にフラッシュ
-            for handler in logger.handlers:
-                handler.flush()
-            
-            # 重複がない場合はそのまま返す
-            if not llm_duplication['has_duplication'] and not rag_duplication['has_duplication']:
-                logger.info("✅ [制約適用] 両方の献立で重複なし")
-                return llm_menu_data, rag_menu_data
-            
-            # 重複がある場合の処理
-            optimized_llm_data = llm_menu_data.copy()
-            optimized_rag_data = rag_menu_data.copy()
-            
-            # LLMデータの重複を修正
-            if llm_duplication['has_duplication']:
-                logger.warning(f"⚠️ [制約適用] LLMデータの重複を修正: {llm_duplication['duplicated_ingredients']}")
-                optimized_llm_data = await self._fix_ingredient_duplication(optimized_llm_data, llm_duplication)
-            
-            # RAGデータの重複を修正
-            if rag_duplication['has_duplication']:
-                logger.warning(f"⚠️ [制約適用] RAGデータの重複を修正: {rag_duplication['duplicated_ingredients']}")
-                optimized_rag_data = await self._fix_ingredient_duplication(optimized_rag_data, rag_duplication)
-            
-            # ログを即座にフラッシュ
-            for handler in logger.handlers:
-                handler.flush()
-            
-            logger.info("✅ [制約適用] 食材重複制約の適用完了")
-            return optimized_llm_data, optimized_rag_data
-            
-        except Exception as e:
-            logger.error(f"❌ [制約適用] エラー: {str(e)}")
-            return llm_menu_data, rag_menu_data
     
-    async def _fix_ingredient_duplication(self, menu_data: dict, duplication_info: dict) -> dict:
-        """
-        重複食材を使わない代替料理に置き換え
-        
-        Args:
-            menu_data: 献立データ
-            duplication_info: 重複情報
-            
-        Returns:
-            置き換え後の献立データ
-        """
-        try:
-            fixed_data = menu_data.copy()
-            duplicated_ingredients = [item[0] for item in duplication_info['duplicated_ingredients']]
-            
-            logger.info(f"🔄 [料理置き換え] 重複食材: {duplicated_ingredients}")
-            
-            # 重複している料理を特定して置き換え
-            for duplication in duplication_info['duplicated_ingredients']:
-                ingredient = duplication[0]
-                dish_pair = duplication[1]  # '主菜-副菜' など
-                
-                logger.info(f"🔄 [料理置き換え] 重複ペア: {dish_pair} (食材: {ingredient})")
-                
-                # 副菜が重複している場合
-                if '副菜' in dish_pair and 'side_dish' in fixed_data:
-                    original_title = fixed_data['side_dish']['title']
-                    alternative_dish = await self._find_alternative_dish(
-                        menu_data, 'side_dish', duplicated_ingredients
-                    )
-                    if alternative_dish:
-                        fixed_data['side_dish'] = alternative_dish
-                        logger.info(f"🔄 [料理置き換え] 副菜を置き換え: {original_title} -> {alternative_dish['title']}")
-                    else:
-                        logger.warning(f"⚠️ [料理置き換え] 副菜の代替料理が見つかりませんでした")
-                
-                # 汁物が重複している場合
-                if '汁物' in dish_pair and 'soup' in fixed_data:
-                    original_title = fixed_data['soup']['title']
-                    alternative_dish = await self._find_alternative_dish(
-                        menu_data, 'soup', duplicated_ingredients
-                    )
-                    if alternative_dish:
-                        fixed_data['soup'] = alternative_dish
-                        logger.info(f"🔄 [料理置き換え] 汁物を置き換え: {original_title} -> {alternative_dish['title']}")
-                    else:
-                        logger.warning(f"⚠️ [料理置き換え] 汁物の代替料理が見つかりませんでした")
-            
-            return fixed_data
-            
-        except Exception as e:
-            logger.error(f"❌ [料理置き換え] エラー: {str(e)}")
-            return menu_data
-
-
 
     async def _format_novel_proposal_new(self, llm_menu_data: dict, web_recipe_data: dict) -> str:
         """斬新な提案のフォーマット（責任分離設計）"""

@@ -57,8 +57,8 @@ file_handler.setFormatter(formatter)
 logger.addHandler(file_handler)
 
 # ログテスト
-logger.info("🔧 [recipe_mcp] シンプルログ設定完了")
-logger.info(f"🔧 [recipe_mcp] プロセスID: {os.getpid()}")
+logger.debug("🔧 [recipe_mcp] シンプルログ設定完了")
+logger.debug(f"🔧 [recipe_mcp] プロセスID: {os.getpid()}")
 
 # MCPサーバーの初期化
 mcp = FastMCP("Recipe Suggestion Server")
@@ -97,7 +97,7 @@ class RecipeVectorSearch:
     def _load_vector_db(self):
         """ベクトルDBを読み込む"""
         try:
-            logger.info(f"ベクトルDB読み込み中: {self.vector_db_path}")
+            logger.debug(f"ベクトルDB読み込み中: {self.vector_db_path}")
             
             # OpenAI Embeddingsの初期化
             self.embeddings = OpenAIEmbeddings()
@@ -108,7 +108,7 @@ class RecipeVectorSearch:
                 embedding_function=self.embeddings
             )
             
-            logger.info("ベクトルDB読み込み完了")
+            logger.debug("ベクトルDB読み込み完了")
             
         except Exception as e:
             logger.error(f"ベクトルDB読み込みエラー: {e}")
@@ -129,7 +129,7 @@ class RecipeVectorSearch:
             if self.vectorstore is None:
                 self._load_vector_db()
             
-            logger.info(f"レシピ検索: '{query}' (上位{k}件)")
+            logger.debug(f"レシピ検索: '{query}' (上位{k}件)")
             
             # 類似度検索を実行
             results = self.vectorstore.similarity_search_with_score(query, k=k)
@@ -155,6 +155,14 @@ class RecipeVectorSearch:
                 formatted_results.append(formatted_result)
             
             logger.info(f"検索結果: {len(formatted_results)}件")
+            
+            # RAG検索結果の詳細ログ出力
+            logger.debug(f"🔍 [RAG検索詳細] 検索されたレシピ一覧:")
+            for i, result in enumerate(formatted_results, 1):
+                logger.debug(f"  RAG結果{i}: {result['title']} (カテゴリ: {result['category']}, スコア: {result['similarity_score']})")
+                logger.debug(f"    主要食材: {result['main_ingredients']}")
+                logger.debug(f"    プレビュー: {result['text_preview'][:100]}...")
+            
             return formatted_results
             
         except Exception as e:
@@ -198,16 +206,16 @@ def detect_ingredient_duplication_internal(menu_data: Dict[str, Any]) -> Dict[st
         重複検出結果
     """
     try:
-        logger.info(f"🔍 [食材重複検出] 検出開始")
+        logger.debug(f"🔍 [食材重複検出] 検出開始")
         
         # 各料理の食材を取得
         main_ingredients = set(menu_data.get("main_dish", {}).get("ingredients", []))
         side_ingredients = set(menu_data.get("side_dish", {}).get("ingredients", []))
         soup_ingredients = set(menu_data.get("soup", {}).get("ingredients", []))
         
-        logger.info(f"🔍 [食材重複検出] 主菜食材: {main_ingredients}")
-        logger.info(f"🔍 [食材重複検出] 副菜食材: {side_ingredients}")
-        logger.info(f"🔍 [食材重複検出] 汁物食材: {soup_ingredients}")
+        logger.debug(f"🔍 [食材重複検出] 主菜食材: {main_ingredients}")
+        logger.debug(f"🔍 [食材重複検出] 副菜食材: {side_ingredients}")
+        logger.debug(f"🔍 [食材重複検出] 汁物食材: {soup_ingredients}")
         
         # 重複検出
         duplicated_ingredients = []
@@ -406,7 +414,7 @@ JSON形式で以下の構造で回答してください：
         )
         
         content = response.choices[0].message.content
-        logger.info(f"🔍 [LLM従来] LLM応答: {content}")
+        logger.debug(f"🔍 [LLM従来] LLM応答: {content}")
         
         # JSON解析（マークダウンのコードブロックを除去）
         try:
@@ -423,7 +431,7 @@ JSON形式で以下の構造で回答してください：
                     content = content[start:end].strip()
             
             menu_data = json.loads(content)
-            logger.info(f"✅ [LLM従来] JSON解析後の献立データ: {menu_data}")
+            logger.debug(f"✅ [LLM従来] JSON解析後の献立データ: {menu_data}")
             return menu_data
             
         except json.JSONDecodeError as e:
@@ -457,8 +465,8 @@ async def generate_llm_menu_candidates_with_ingredients(
         client = openai_client.get_client()
         
         # グローバルロガーを使用（統一）
-        logger.info(f"🔧 [LLM候補生成] ロガー設定確認: レベル={logger.level}, ハンドラー={len(logger.handlers)}")
-        logger.info(f"🔍 [LLM候補生成] {num_candidates}個の候補を生成開始")
+        logger.debug(f"🔧 [LLM候補生成] ロガー設定確認: レベル={logger.level}, ハンドラー={len(logger.handlers)}")
+        logger.debug(f"🔍 [LLM候補生成] {num_candidates}個の候補を生成開始")
         
         prompt = f"""
 あなたは料理の専門家です。以下の在庫食材から{num_candidates}つの献立候補を提案してください。
@@ -525,7 +533,7 @@ JSON形式で以下の構造で{num_candidates}つの候補を出力してくだ
         )
         
         content = response.choices[0].message.content
-        logger.info(f"🔍 [LLM候補生成] LLM応答: {content[:200]}...")
+        logger.debug(f"🔍 [LLM候補生成] LLM応答: {content[:200]}...")
         
         # JSON解析（マークダウンのコードブロックを除去）
         try:
@@ -544,12 +552,12 @@ JSON形式で以下の構造で{num_candidates}つの候補を出力してくだ
             logger.info(f"✅ [LLM候補生成] {len(candidates_data.get('candidates', []))}個の候補を生成完了")
             
             # 生成された献立候補の詳細ログ
-            logger.info(f"🔍 [LLM候補生成] 生成された献立候補詳細:")
+            logger.debug(f"🔍 [LLM候補生成] 生成された献立候補詳細:")
             for i, candidate in enumerate(candidates_data.get('candidates', [])):
-                logger.info(f"  LLM候補{i+1}:")
-                logger.info(f"    主菜: {candidate.get('main_dish', {}).get('title', '未設定')} - 食材: {candidate.get('main_dish', {}).get('ingredients', [])}")
-                logger.info(f"    副菜: {candidate.get('side_dish', {}).get('title', '未設定')} - 食材: {candidate.get('side_dish', {}).get('ingredients', [])}")
-                logger.info(f"    汁物: {candidate.get('soup', {}).get('title', '未設定')} - 食材: {candidate.get('soup', {}).get('ingredients', [])}")
+                logger.debug(f"  LLM候補{i+1}:")
+                logger.debug(f"    主菜: {candidate.get('main_dish', {}).get('title', '未設定')} - 食材: {candidate.get('main_dish', {}).get('ingredients', [])}")
+                logger.debug(f"    副菜: {candidate.get('side_dish', {}).get('title', '未設定')} - 食材: {candidate.get('side_dish', {}).get('ingredients', [])}")
+                logger.debug(f"    汁物: {candidate.get('soup', {}).get('title', '未設定')} - 食材: {candidate.get('soup', {}).get('ingredients', [])}")
             
             return candidates_data
             
@@ -580,15 +588,15 @@ async def select_optimal_menu_from_llm_candidates(
     try:
         client = openai_client.get_client()
         
-        logger.info(f"🔍 [AI制約解決] {len(candidates)}個の候補から最適解を選択")
+        logger.debug(f"🔍 [AI制約解決] {len(candidates)}個の候補から最適解を選択")
         
         # 候補の詳細をログ出力
-        logger.info(f"🔍 [AI制約解決] 候補詳細:")
+        logger.debug(f"🔍 [AI制約解決] 候補詳細:")
         for i, candidate in enumerate(candidates):
-            logger.info(f"  候補{i+1}:")
-            logger.info(f"    主菜: {candidate['main_dish']['title']} - 食材: {candidate['main_dish']['ingredients']}")
-            logger.info(f"    副菜: {candidate['side_dish']['title']} - 食材: {candidate['side_dish']['ingredients']}")
-            logger.info(f"    汁物: {candidate['soup']['title']} - 食材: {candidate['soup']['ingredients']}")
+            logger.debug(f"  候補{i+1}:")
+            logger.debug(f"    主菜: {candidate['main_dish']['title']} - 食材: {candidate['main_dish']['ingredients']}")
+            logger.debug(f"    副菜: {candidate['side_dish']['title']} - 食材: {candidate['side_dish']['ingredients']}")
+            logger.debug(f"    汁物: {candidate['soup']['title']} - 食材: {candidate['soup']['ingredients']}")
         
         prompt = f"""
 あなたは献立の制約解決専門家です。以下の候補から、制約を満たす最適な献立を選択してください。
@@ -642,7 +650,7 @@ async def select_optimal_menu_from_llm_candidates(
         )
         
         content = response.choices[0].message.content
-        logger.info(f"🔍 [AI制約解決] LLM応答: {content[:200]}...")
+        logger.debug(f"🔍 [AI制約解決] LLM応答: {content[:200]}...")
         
         # JSON解析
         try:
@@ -779,8 +787,8 @@ async def generate_rag_menu_candidates_with_ingredients(
         client = openai_client.get_client()
         
         # グローバルロガーを使用（統一）
-        logger.info(f"🔧 [RAG献立候補生成] ロガー設定確認: レベル={logger.level}, ハンドラー={len(logger.handlers)}")
-        logger.info(f"🔍 [RAG献立候補生成] {max_results}個の献立候補を生成開始")
+        logger.debug(f"🔧 [RAG献立候補生成] ロガー設定確認: レベル={logger.level}, ハンドラー={len(logger.handlers)}")
+        logger.debug(f"🔍 [RAG献立候補生成] {max_results}個の献立候補を生成開始")
         
         # Step 1: RAG検索で料理候補を取得
         vector_search = get_vector_search()
@@ -788,11 +796,11 @@ async def generate_rag_menu_candidates_with_ingredients(
         
         # 検索クエリ生成
         rag_query = f"{menu_type} {' '.join(inventory_items[:5])} 献立 主菜 副菜 汁物"
-        logger.info(f"🔍 [RAG献立候補生成] 検索クエリ生成: '{rag_query}'")
+        logger.debug(f"🔍 [RAG献立候補生成] 検索クエリ生成: '{rag_query}'")
         
         # ベクトル検索実行
         search_results = vector_search.search_similar_recipes(rag_query, k=max_results * 10)
-        logger.info(f"🔍 [RAG献立候補生成] ベクトル検索結果: {len(search_results)}件")
+        logger.debug(f"🔍 [RAG献立候補生成] ベクトル検索結果: {len(search_results)}件")
         
         # 除外レシピをフィルタリング
         filtered_results = []
@@ -801,11 +809,13 @@ async def generate_rag_menu_candidates_with_ingredients(
             if not any(excluded in title for excluded in excluded_recipes):
                 filtered_results.append(result)
         
-        logger.info(f"🔍 [RAG献立候補生成] フィルタリング後: {len(filtered_results)}件")
+        logger.debug(f"🔍 [RAG献立候補生成] フィルタリング後: {len(filtered_results)}件")
         
         # Step 2: LLMで献立候補を生成
         prompt = f"""
 あなたは料理の専門家です。以下のRAG検索結果から{max_results}つの献立候補を提案してください。
+
+【重要】RAG検索結果のタイトルを必ず使用してください。独自にレシピタイトルを生成しないでください。
 
 【在庫食材】
 {', '.join(inventory_items)}
@@ -816,8 +826,14 @@ async def generate_rag_menu_candidates_with_ingredients(
 【除外レシピ】
 {', '.join(excluded_recipes)}
 
-【RAG検索結果】
+【RAG検索結果（必ずこの中から選択）】
 {json.dumps(filtered_results[:20], ensure_ascii=False, indent=2)}
+
+【制約条件】
+1. RAG検索結果のタイトルを必ず使用する
+2. 独自にレシピタイトルを生成しない
+3. 各料理で同じ食材を使用しない（調味料除く）
+4. 主菜・副菜・汁物の3品構成
 
 【出力形式】
 JSON形式で以下の構造で{max_results}つの献立候補を出力してください：
@@ -827,15 +843,15 @@ JSON形式で以下の構造で{max_results}つの献立候補を出力してく
         {{
             "candidate_id": 1,
             "main_dish": {{
-                "title": "料理名",
+                "title": "RAG検索結果から選択した料理名",
                 "ingredients": ["食材1", "食材2", "食材3"]
             }},
             "side_dish": {{
-                "title": "料理名",
+                "title": "RAG検索結果から選択した料理名",
                 "ingredients": ["食材1", "食材2", "食材3"]
             }},
             "soup": {{
-                "title": "料理名",
+                "title": "RAG検索結果から選択した料理名",
                 "ingredients": ["食材1", "食材2", "食材3"]
             }}
         }},
@@ -855,11 +871,14 @@ JSON形式で以下の構造で{max_results}つの献立候補を出力してく
 }}
 
 【重要】
+- 各料理のtitleは、RAG検索結果のtitleから必ず選択してください
+- RAG検索結果のtitleには材料情報が含まれている場合がありますが、料理名の部分のみを抽出して使用してください
+- 例: 「豚バラブロックの甘酢たれ丼 豚バラブロック ◆醤油、砂糖、酢各大さじ...」→「豚バラブロックの甘酢たれ丼」
+- 独自にレシピタイトルを生成しないでください
+- RAG検索結果にない料理名は使用しないでください
 - 各料理のingredientsには、在庫食材から選択した主要食材を明記
 - 調味料（塩、胡椒、醤油など）は除く
-- 在庫食材のみを使用
 - 各候補で異なる献立を提案
-- RAG検索結果を参考に、実用的で美味しい献立を提案
 """
         
         response = await client.chat.completions.create(
@@ -873,7 +892,7 @@ JSON形式で以下の構造で{max_results}つの献立候補を出力してく
         )
         
         content = response.choices[0].message.content
-        logger.info(f"🔍 [RAG献立候補生成] LLM応答: {content[:200]}...")
+        logger.debug(f"🔍 [RAG献立候補生成] LLM応答: {content[:200]}...")
         
         # JSON解析
         try:
@@ -892,12 +911,12 @@ JSON形式で以下の構造で{max_results}つの献立候補を出力してく
             logger.info(f"✅ [RAG献立候補生成] {len(candidates_data.get('candidates', []))}個の献立候補を生成完了")
             
             # 生成された献立候補の詳細ログ
-            logger.info(f"🔍 [RAG献立候補生成] 生成された献立候補詳細:")
+            logger.debug(f"🔍 [RAG献立候補生成] 生成された献立候補詳細:")
             for i, candidate in enumerate(candidates_data.get('candidates', [])):
-                logger.info(f"  RAG候補{i+1}:")
-                logger.info(f"    主菜: {candidate.get('main_dish', {}).get('title', '未設定')} - 食材: {candidate.get('main_dish', {}).get('ingredients', [])}")
-                logger.info(f"    副菜: {candidate.get('side_dish', {}).get('title', '未設定')} - 食材: {candidate.get('side_dish', {}).get('ingredients', [])}")
-                logger.info(f"    汁物: {candidate.get('soup', {}).get('title', '未設定')} - 食材: {candidate.get('soup', {}).get('ingredients', [])}")
+                logger.debug(f"  RAG候補{i+1}:")
+                logger.debug(f"    主菜: {candidate.get('main_dish', {}).get('title', '未設定')} - 食材: {candidate.get('main_dish', {}).get('ingredients', [])}")
+                logger.debug(f"    副菜: {candidate.get('side_dish', {}).get('title', '未設定')} - 食材: {candidate.get('side_dish', {}).get('ingredients', [])}")
+                logger.debug(f"    汁物: {candidate.get('soup', {}).get('title', '未設定')} - 食材: {candidate.get('soup', {}).get('ingredients', [])}")
             
             return candidates_data
             
@@ -928,16 +947,16 @@ async def select_optimal_menu_from_rag_candidates(
     try:
         client = openai_client.get_client()
         
-        logger.info(f"🔍 [RAG制約解決] RAG献立候補から最適解を選択")
-        logger.info(f"🔍 [RAG制約解決] 候補数: {len(rag_candidates.get('candidates', []))}個")
+        logger.debug(f"🔍 [RAG制約解決] RAG献立候補から最適解を選択")
+        logger.debug(f"🔍 [RAG制約解決] 候補数: {len(rag_candidates.get('candidates', []))}個")
         
         # 候補の詳細をログ出力
-        logger.info(f"🔍 [RAG制約解決] 献立候補詳細:")
+        logger.debug(f"🔍 [RAG制約解決] 献立候補詳細:")
         for i, candidate in enumerate(rag_candidates.get('candidates', [])):
-            logger.info(f"  候補{i+1}:")
-            logger.info(f"    主菜: {candidate['main_dish']['title']} - 食材: {candidate['main_dish']['ingredients']}")
-            logger.info(f"    副菜: {candidate['side_dish']['title']} - 食材: {candidate['side_dish']['ingredients']}")
-            logger.info(f"    汁物: {candidate['soup']['title']} - 食材: {candidate['soup']['ingredients']}")
+            logger.debug(f"  候補{i+1}:")
+            logger.debug(f"    主菜: {candidate['main_dish']['title']} - 食材: {candidate['main_dish']['ingredients']}")
+            logger.debug(f"    副菜: {candidate['side_dish']['title']} - 食材: {candidate['side_dish']['ingredients']}")
+            logger.debug(f"    汁物: {candidate['soup']['title']} - 食材: {candidate['soup']['ingredients']}")
         
         prompt = f"""
 あなたは献立の制約解決専門家です。以下のRAG献立候補から、制約を満たす最適な献立を選択してください。
@@ -991,7 +1010,7 @@ async def select_optimal_menu_from_rag_candidates(
         )
         
         content = response.choices[0].message.content
-        logger.info(f"🔍 [RAG制約解決] LLM応答: {content[:200]}...")
+        logger.debug(f"🔍 [RAG制約解決] LLM応答: {content[:200]}...")
         
         # JSON解析
         try:
@@ -1312,8 +1331,8 @@ async def search_recipe_from_web(
                 "error": "menu_titlesパラメータが必要です"
             }
         
-        # 献立タイトルから検索クエリを生成
-        queries = [f"{title} 作り方" for title in menu_titles]
+        # 献立タイトルから検索クエリを生成（「作り方」は付けない）
+        queries = [title for title in menu_titles]
         
         logger.info(f"🔍 [Web検索] 開始: {len(queries)}個の献立タイトル (最大{max_results}件/タイトル)")
         
