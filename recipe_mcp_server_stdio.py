@@ -1290,6 +1290,67 @@ async def search_menu_from_rag_with_history(
             "error": f"RAG献立検索エラー: {str(e)}"
         }
 
+async def _search_single_recipe(menu_title: str, single_query: str, max_results: int) -> List[Dict[str, Any]]:
+    """個別レシピ検索処理（並列実行用）
+    
+    Args:
+        menu_title: 献立タイトル
+        single_query: 検索クエリ
+        max_results: 最大取得件数
+        
+    Returns:
+        レシピデータのリスト
+    """
+    try:
+        client = get_perplexity_client()
+        recipes = await asyncio.wait_for(
+            asyncio.to_thread(client.search_recipe, single_query, max_results=max_results),
+            timeout=30.0
+        )
+        
+        # 結果に献立タイトル情報を追加
+        return [{
+            "menu_title": menu_title,
+            "query": single_query,
+            "title": recipe.title,
+            "url": recipe.url,
+            "source": recipe.source,
+            "ingredients": recipe.ingredients,
+            "instructions": recipe.instructions,
+            "cooking_time": recipe.cooking_time,
+            "servings": recipe.servings,
+            "snippet": recipe.snippet
+        } for recipe in recipes]
+        
+    except asyncio.TimeoutError:
+        logger.warning(f"⚠️ [Web検索] タイムアウト: '{menu_title}' (30秒)")
+        return [{
+            "menu_title": menu_title,
+            "query": single_query,
+            "title": f"{menu_title} (検索タイムアウト)",
+            "url": "",
+            "source": "エラー",
+            "ingredients": [],
+            "instructions": "検索がタイムアウトしました。しばらく時間をおいて再実行してください。",
+            "cooking_time": "",
+            "servings": "",
+            "snippet": ""
+        }]
+    except Exception as e:
+        logger.error(f"❌ [Web検索] エラー: {e}")
+        return [{
+            "menu_title": menu_title,
+            "query": single_query,
+            "title": f"{menu_title} (検索エラー)",
+            "url": "",
+            "source": "エラー",
+            "ingredients": [],
+            "instructions": f"検索エラー: {str(e)}",
+            "cooking_time": "",
+            "servings": "",
+            "snippet": ""
+        }]
+
 @mcp.tool()
 async def search_recipe_from_web(
     menu_titles: List[str],
@@ -1339,69 +1400,39 @@ async def search_recipe_from_web(
         # Perplexity API クライアントを取得
         client = get_perplexity_client()
         
-        # 全クエリの結果を格納
-        all_recipes = []
+        # 並列実行用のタスクを作成
+        logger.info(f"🔍 [Web検索] 並列実行開始: {len(queries)}個の献立タイトル")
         
-        # 各献立タイトルで個別に検索
-        for i, (menu_title, single_query) in enumerate(zip(menu_titles, queries)):
-            logger.info(f"🔍 [Web検索] {i+1}/{len(queries)}: '{menu_title}' -> '{single_query}'")
-            
-            try:
-                # レシピ検索を実行（タイムアウト処理付き）
-                import asyncio
-                recipes = await asyncio.wait_for(
-                    asyncio.to_thread(client.search_recipe, single_query, max_results=max_results),
-                    timeout=30.0  # 30秒でタイムアウト
-                )
-                
-                # 結果に献立タイトル情報を追加
-                for recipe in recipes:
-                    recipe_data = {
-                        "menu_title": menu_title,
-                        "query": single_query,
-                        "title": recipe.title,
-                        "url": recipe.url,
-                        "source": recipe.source,
-                        "ingredients": recipe.ingredients,
-                        "instructions": recipe.instructions,
-                        "cooking_time": recipe.cooking_time,
-                        "servings": recipe.servings,
-                        "snippet": recipe.snippet
-                    }
-                    all_recipes.append(recipe_data)
-                
-                logger.info(f"✅ [Web検索] {i+1} 完了: {len(recipes)}件のレシピを発見")
-                
-            except asyncio.TimeoutError:
-                logger.warning(f"⚠️ [Web検索] {i+1} タイムアウト: '{menu_title}' (30秒)")
-                # タイムアウトした献立タイトルの結果を追加
+        tasks = [
+            _search_single_recipe(menu_title, single_query, max_results)
+            for menu_title, single_query in zip(menu_titles, queries)
+        ]
+        
+        # 並列実行（エラーがあっても継続）
+        import asyncio
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # 結果を統合
+        all_recipes = []
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                logger.error(f"❌ [Web検索] {i+1} タスクエラー: {result}")
+                # エラー時のデフォルト結果を追加
                 all_recipes.append({
-                    "menu_title": menu_title,
-                    "query": single_query,
-                    "title": f"{menu_title} (検索タイムアウト)",
+                    "menu_title": menu_titles[i],
+                    "query": queries[i],
+                    "title": f"{menu_titles[i]} (タスクエラー)",
                     "url": "",
                     "source": "エラー",
                     "ingredients": [],
-                    "instructions": "検索がタイムアウトしました。しばらく時間をおいて再実行してください。",
+                    "instructions": f"タスクエラー: {str(result)}",
                     "cooking_time": "",
                     "servings": "",
                     "snippet": ""
                 })
-            except Exception as e:
-                logger.error(f"❌ [Web検索] {i+1} エラー: {e}")
-                # エラーが発生した献立タイトルの結果を追加
-                all_recipes.append({
-                    "menu_title": menu_title,
-                    "query": single_query,
-                    "title": f"{menu_title} (検索エラー)",
-                    "url": "",
-                    "source": "エラー",
-                    "ingredients": [],
-                    "instructions": f"検索エラー: {str(e)}",
-                    "cooking_time": "",
-                    "servings": "",
-                    "snippet": ""
-                })
+            else:
+                all_recipes.extend(result)
+                logger.info(f"✅ [Web検索] {i+1} 完了: {len(result)}件のレシピを発見")
         
         # レスポンス構築
         response_data = {
@@ -1412,7 +1443,7 @@ async def search_recipe_from_web(
             "recipes": all_recipes
         }
         
-        logger.info(f"✅ [Web検索] 完了: {len(all_recipes)}件のレシピを発見")
+        logger.info(f"✅ [Web検索] 並列実行完了: {len(all_recipes)}件のレシピを発見")
         
         return {
             "success": True,
