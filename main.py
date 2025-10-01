@@ -9,9 +9,13 @@ For licensing inquiries, contact: [contact@morizo-ai.com]
 """
 
 import os
+import json
+import asyncio
 from dotenv import load_dotenv
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from sse_sender import get_sse_sender, SSESender
 
 # 環境変数の読み込み
 load_dotenv()
@@ -257,8 +261,13 @@ async def chat(request: ChatRequest, auth_data = Depends(verify_token)):
         logger.info(f"🔍 [MAIN] リクエスト詳細: message={request.message}, user_id={request.user_id}")
         logger.info(f"🔍 [MAIN] 認証データ: {type(auth_data)}")
         
+        # SSEセッションIDを取得（リクエストに含まれている場合）
+        sse_session_id = getattr(request, 'sse_session_id', None)
+        if sse_session_id:
+            logger.info(f"📡 [MAIN] SSEセッションID検出: {sse_session_id}")
+        
         logger.info(f"🔍 [MAIN] handle_chat_request呼び出し開始")
-        result = await handle_chat_request(request, auth_data)
+        result = await handle_chat_request(request, auth_data, sse_session_id)
         logger.info(f"✅ [MAIN] handle_chat_request呼び出し完了")
         logger.info(f"✅ [MAIN] チャットリクエスト処理完了")
         return result
@@ -365,6 +374,169 @@ async def confirm_chat(request: ChatRequest, auth_data = Depends(verify_token)):
         import traceback
         logger.error(f"❌ [MAIN] トレースバック: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Confirmation processing error: {str(e)}")
+
+# SSEストリーミングエンドポイント（認証あり）
+@app.get("/chat/stream/{sse_session_id}")
+async def stream_chat_progress(sse_session_id: str, auth_data = Depends(verify_token)):
+    """
+    ストリーミング進捗表示エンドポイント
+    フロントエンドからEventSource APIで接続し、リアルタイムで進捗情報を送信
+    """
+    try:
+        logger.info(f"📡 [SSE] ストリーミング接続開始: sse_session_id={sse_session_id}")
+        
+        # SSE接続識別子の検証（UUID形式チェック）
+        import uuid
+        try:
+            uuid.UUID(sse_session_id)
+            logger.info(f"✅ [SSE] SSE接続識別子検証成功: {sse_session_id}")
+        except ValueError:
+            logger.error(f"❌ [SSE] 無効なSSE接続識別子: {sse_session_id}")
+            error_data = {
+                "type": "error",
+                "sse_session_id": sse_session_id,
+                "timestamp": asyncio.get_event_loop().time(),
+                "message": "無効なSSE接続識別子です",
+                "error": {
+                    "code": "INVALID_SSE_SESSION_ID",
+                    "message": "SSE接続識別子が無効な形式です",
+                    "details": "有効なUUID形式の識別子を指定してください"
+                }
+            }
+            return StreamingResponse(
+                f"data: {json.dumps(error_data)}\n\n",
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Headers": "Cache-Control"
+                }
+            )
+        
+        # 認証データの詳細ログ
+        current_user = auth_data["user"]
+        raw_token = auth_data["raw_token"]
+        logger.info(f"🔐 [SSE] 認証データ確認: user_id={current_user.id}, token_prefix={raw_token[:20]}...")
+        
+        # フロントエンドのsse_session_idをSSE接続の識別子として使用
+        logger.info(f"📡 [SSE] SSE接続識別子: {sse_session_id}")
+        
+        # ユーザーセッション管理（認証ベース）
+        from session_manager import session_manager
+        logger.info(f"📱 [SSE] ユーザーセッション管理開始: user_id={current_user.id}")
+        
+        user_session = session_manager.get_or_create_session(current_user.id, raw_token)
+        logger.info(f"📱 [SSE] ユーザーセッション取得完了: session_id={user_session.session_id}")
+        logger.info(f"📱 [SSE] ユーザーセッション詳細: created_at={user_session.created_at}, is_streaming={user_session.is_streaming}")
+        
+        # セッションID検証を削除（フロントエンドのsse_session_idを尊重）
+        # フロントエンドのsse_session_idはSSE接続の識別子として使用
+        # ユーザーセッションIDは認証ベースで管理
+        logger.info(f"📡 [SSE] SSE接続識別子: {sse_session_id}")
+        logger.info(f"📱 [SSE] ユーザーセッションID: {user_session.session_id}")
+        
+        async def generate_progress_stream():
+            """ストリーミングデータを生成するジェネレータ（SSESender方式）"""
+            try:
+                # SSESenderを取得
+                sse_sender = get_sse_sender(sse_session_id)
+                connection_id = str(uuid.uuid4())
+                queue = asyncio.Queue()
+                
+                # 接続を追加
+                logger.info(f"📡 [SSE] 接続追加開始: connection_id={connection_id}")
+                sse_sender.add_connection(connection_id, queue)
+                logger.info(f"📡 [SSE] 接続追加完了: connections={len(sse_sender.connections)}")
+                
+                # ストリーミング状態をセッションに設定
+                user_session.set_streaming_state(True)
+                
+                # メッセージ受信ループ
+                timeout_count = 0
+                max_timeout = 120  # 120秒でタイムアウト（Web検索対応）
+                
+                while timeout_count < max_timeout:
+                    try:
+                        # メッセージを受信（タイムアウト付き）
+                        message = await asyncio.wait_for(queue.get(), timeout=0.5)
+                        yield message
+                        
+                        # 完了メッセージの場合はループを終了
+                        if '"type": "complete"' in message:
+                            logger.info(f"📡 [SSE] 完了メッセージ受信: connection_id={connection_id}")
+                            break
+                            
+                    except asyncio.TimeoutError:
+                        # タイムアウト時は継続
+                        timeout_count += 0.5
+                        continue
+                    except Exception as e:
+                        logger.error(f"❌ [SSE] メッセージ受信エラー: {str(e)}")
+                        break
+                
+                # タイムアウト処理
+                if timeout_count >= max_timeout:
+                    timeout_data = {
+                        "type": "timeout",
+                        "sse_session_id": sse_session_id,
+                        "timestamp": asyncio.get_event_loop().time(),
+                        "message": "処理がタイムアウトしました",
+                        "error": {
+                            "code": "TIMEOUT",
+                            "message": "処理が120秒を超えました",
+                            "details": "ストリーミング接続を終了します"
+                        }
+                    }
+                    yield f"data: {json.dumps(timeout_data)}\n\n"
+                
+            except Exception as e:
+                logger.error(f"❌ [SSE] ストリーミング生成エラー: {str(e)}")
+                error_data = {
+                    "type": "error",
+                    "sse_session_id": sse_session_id,
+                    "timestamp": asyncio.get_event_loop().time(),
+                    "message": "ストリーミング中にエラーが発生しました",
+                    "error": {
+                        "code": "STREAM_ERROR",
+                        "message": str(e),
+                        "details": "ストリーミング処理に失敗しました"
+                    }
+                }
+                yield f"data: {json.dumps(error_data)}\n\n"
+            finally:
+                # 接続を削除
+                try:
+                    sse_sender = get_sse_sender(sse_session_id)
+                    sse_sender.remove_connection(connection_id)
+                    logger.info(f"📡 [SSE] 接続削除完了: connection_id={connection_id}")
+                except Exception as e:
+                    logger.error(f"❌ [SSE] 接続削除エラー: {str(e)}")
+                
+                # ストリーミング状態をクリア
+                user_session.set_streaming_state(False)
+                logger.info(f"📡 [SSE] ストリーミング接続終了: sse_session_id={sse_session_id}")
+        
+        return StreamingResponse(
+            generate_progress_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "Cache-Control"
+            }
+        )
+        
+    except HTTPException:
+        # HTTPExceptionはそのまま再発生
+        raise
+    except Exception as e:
+        logger.error(f"❌ [SSE] ストリーミングエンドポイントエラー: {str(e)}")
+        logger.error(f"❌ [SSE] エラータイプ: {type(e).__name__}")
+        import traceback
+        logger.error(f"❌ [SSE] トレースバック: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Streaming error: {str(e)}")
 
 # セッション管理ルート
 setup_session_routes(app)

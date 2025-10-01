@@ -79,6 +79,10 @@ def setup_logging():
     # MCP関連のログをINFOレベルに設定（デバッグ用）
     logging.getLogger('morizo_ai.mcp').setLevel(logging.INFO)
     
+    # TaskChainManagerとSSESenderのログをINFOレベルに設定
+    logging.getLogger('morizo_ai.task_chain_manager').setLevel(logging.INFO)
+    logging.getLogger('morizo_ai.sse_sender').setLevel(logging.INFO)
+    
     # FastMCPのログを抑制
     logging.getLogger('mcp').setLevel(logging.WARNING)
     logging.getLogger('mcp.client').setLevel(logging.WARNING)

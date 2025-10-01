@@ -47,6 +47,27 @@ Smart Pantry MVPのAIエージェント（LLM処理 + 音声認識 ✅ **実装�
 
 ## 機能
 
+### 🚀 新機能: ストリーミング機能 ✅ **実装完了**
+
+#### リアルタイム進捗表示
+- **Server-Sent Events (SSE)**: リアルタイム進捗表示
+- **進捗バー**: 0% → 25% → 50% → 75% → 100%の完全な進捗更新
+- **タスク状況**: 現在実行中のタスクをリアルタイムで表示
+- **エラー通知**: エラー発生時の適切な通知
+- **タイムアウト対応**: 120秒（Web検索処理時間を考慮）
+
+#### 技術仕様
+- **エンドポイント**: `GET /chat/stream/{sse_session_id}`
+- **認証**: Bearer Token認証
+- **接続管理**: SSESenderクラス
+- **進捗管理**: TaskChainManager
+
+#### 実装ファイル
+- `sse_sender.py`: SSE接続管理とメッセージ配信
+- `task_chain_manager.py`: 進捗管理とSSE送信
+- `true_react_agent.py`: SSEセッションID連携
+- `main.py`: SSEエンドポイント（SSESender方式）
+
 ### AIエージェント
 - OpenAI GPT-4による自然言語処理
 - 音声コマンドの意図解析 ✅ **OpenAI Whisper統合済み**
@@ -190,6 +211,7 @@ curl http://localhost:8000/health
 - ✅ **Perplexity API統合**: Web検索機能（完了）
 - ✅ **Phase 4.4**: 確認プロセス（完了）
 - ✅ **Phase 4.5**: 並列提示システム（完了・2025年9月29日）
+- ✅ **ストリーミング機能**: リアルタイム進捗表示（完了・2025年10月1日）
 
 詳細は[開発ロードマップ](docs/ROADMAP.md)と[自前ReActループ実装フロー](docs/MAKINGREACT.md)をご確認ください。
 

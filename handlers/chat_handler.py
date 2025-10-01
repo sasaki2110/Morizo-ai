@@ -16,7 +16,7 @@ import os
 logger = logging.getLogger('morizo_ai.chat_handler')
 
 
-async def process_with_unified_react(request: ChatRequest, user_session, raw_token: str) -> ChatResponse:
+async def process_with_unified_react(request: ChatRequest, user_session, raw_token: str, sse_session_id: str = None) -> ChatResponse:
     """
     統一されたReActエージェントで処理する
     単純な要求も複雑な要求も同じフローで処理
@@ -27,8 +27,8 @@ async def process_with_unified_react(request: ChatRequest, user_session, raw_tok
         # OpenAIクライアントの初期化
         client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         
-        # 真のReActエージェントの初期化
-        true_react_agent = TrueReactAgent(client)
+        # 真のReActエージェントの初期化（SSEセッションID対応）
+        true_react_agent = TrueReactAgent(client, sse_session_id)
         
         # MCPから動的にツール一覧を取得
         available_tools = await get_available_tools_from_mcp()
@@ -86,7 +86,7 @@ async def process_with_unified_react(request: ChatRequest, user_session, raw_tok
         )
 
 
-async def handle_chat_request(request: ChatRequest, auth_data) -> ChatResponse:
+async def handle_chat_request(request: ChatRequest, auth_data, sse_session_id: str = None) -> ChatResponse:
     """
     チャットリクエストを処理するメインハンドラー
     """
@@ -115,8 +115,8 @@ async def handle_chat_request(request: ChatRequest, auth_data) -> ChatResponse:
         logger.debug(f"   User ID: {current_user.id}")
         logger.debug(f"   Session ID: {user_session.session_id}")
         
-        # 統一されたReActエージェントで処理
-        result = await process_with_unified_react(request, user_session, raw_token)
+        # 統一されたReActエージェントで処理（SSEセッションID対応）
+        result = await process_with_unified_react(request, user_session, raw_token, sse_session_id)
         
         logger.info(f"\n=== Morizo AI 統一ReActエージェント 完了 ===")
         logger.info(f"✅ [完了] レスポンス生成完了")

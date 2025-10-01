@@ -9,6 +9,7 @@ from typing import Optional, Dict, Any
 class ChatRequest(BaseModel):
     message: str
     user_id: Optional[str] = None
+    sse_session_id: Optional[str] = None
 
 
 class ChatResponse(BaseModel):

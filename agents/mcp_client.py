@@ -50,6 +50,12 @@ class MCPClient:
                     return {"success": False, "error": "No result from MCP tool"}
         except Exception as e:
             logger.error(f"❌ [MCP] ツール呼び出しエラー: {str(e)}")
+            logger.error(f"❌ [MCP] エラータイプ: {type(e).__name__}")
+            logger.error(f"❌ [MCP] ツール名: {tool_name}")
+            logger.error(f"❌ [MCP] サーバータイプ: {self.server_type}")
+            logger.error(f"❌ [MCP] 引数: {arguments}")
+            import traceback
+            logger.error(f"❌ [MCP] トレースバック: {traceback.format_exc()}")
             return {"success": False, "error": f"MCP tool error: {str(e)}"}
     
     async def get_tool_details(self) -> Dict[str, Dict[str, Any]]:
@@ -145,4 +151,9 @@ async def call_mcp_tool(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, 
         
     except Exception as e:
         logger.error(f"❌ [FastMCP] ツール呼び出しエラー: {str(e)}")
+        logger.error(f"❌ [FastMCP] エラータイプ: {type(e).__name__}")
+        logger.error(f"❌ [FastMCP] ツール名: {tool_name}")
+        logger.error(f"❌ [FastMCP] 引数: {arguments}")
+        import traceback
+        logger.error(f"❌ [FastMCP] トレースバック: {traceback.format_exc()}")
         return {"success": False, "error": f"MCP tool error: {str(e)}"}

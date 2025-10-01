@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 import json
 import logging
+import os
 
 # ログ設定
 logger = logging.getLogger('morizo_ai.session')
@@ -51,6 +52,15 @@ class SessionContext:
         self.executed_tasks = []  # 実行済みタスク
         self.remaining_tasks = []  # 残りタスク
         self.confirmation_timeout = 300  # 確認タイムアウト（5分）
+        
+        # ストリーミング状態管理
+        self.is_streaming = False  # ストリーミング中かどうか
+        self.streaming_start_time = None  # ストリーミング開始時刻
+        self.streaming_timeout = 60  # ストリーミングタイムアウト（60秒）
+        
+        # 新規追加: TrueReactAgentとTaskChainManagerの管理
+        self.react_agent: Optional[Any] = None  # TrueReactAgentインスタンス
+        self.task_chain_manager: Optional[Any] = None  # TaskChainManagerインスタンス
         
         
     def add_operation(self, operation_type: str, details: Dict[str, Any]):
@@ -135,7 +145,32 @@ class SessionContext:
         }
         logger.debug(f"📊 [セッション] タスクチェーン状態を保存: 実行済み{len(executed_tasks)}件, 残り{len(remaining_tasks)}件")
         
+    # ストリーミング状態管理メソッド
+    def set_streaming_state(self, is_streaming: bool):
+        """ストリーミング状態を設定"""
+        self.is_streaming = is_streaming
+        if is_streaming:
+            self.streaming_start_time = datetime.now()
+            logger.debug(f"📡 [セッション] ストリーミング開始: {self.user_id}")
+        else:
+            self.streaming_start_time = None
+            logger.debug(f"📡 [セッション] ストリーミング終了: {self.user_id}")
+    
+    def is_streaming_active(self) -> bool:
+        """ストリーミングがアクティブかチェック"""
+        if not self.is_streaming or not self.streaming_start_time:
+            return False
         
+        # ストリーミングタイムアウトチェック
+        time_diff = datetime.now() - self.streaming_start_time
+        return time_diff.total_seconds() < self.streaming_timeout
+    
+    def get_streaming_duration(self) -> float:
+        """ストリーミング継続時間を取得（秒）"""
+        if not self.streaming_start_time:
+            return 0.0
+        time_diff = datetime.now() - self.streaming_start_time
+        return time_diff.total_seconds()
         
     def to_dict(self) -> Dict[str, Any]:
         """セッション情報を辞書形式で取得"""
@@ -146,7 +181,9 @@ class SessionContext:
             "last_activity": self.last_activity.isoformat(),
             "operation_history_count": len(self.operation_history),
             "conversation_context_count": len(self.conversation_context),
-            "session_duration_minutes": self.get_session_duration().total_seconds() / 60
+            "session_duration_minutes": self.get_session_duration().total_seconds() / 60,
+            "is_streaming": self.is_streaming,
+            "streaming_duration_seconds": self.get_streaming_duration()
         }
 
 
@@ -175,6 +212,20 @@ class SessionManager:
         
         # 新規セッション作成
         session = SessionContext(user_id, token)
+        
+        # 新規追加: TrueReactAgentとTaskChainManagerを初期化
+        try:
+            from true_react_agent import TrueReactAgent
+            from openai import OpenAI
+            
+            openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            session.react_agent = TrueReactAgent(openai_client)
+            session.task_chain_manager = session.react_agent.task_chain_manager
+            logger.info(f"🤖 [セッション管理] TrueReactAgent初期化完了: {user_id}")
+        except Exception as e:
+            logger.error(f"❌ [セッション管理] TrueReactAgent初期化エラー: {str(e)}")
+            # エラーが発生してもセッションは作成する
+        
         self.active_sessions[user_id] = session
         print(f"🆕 新規セッション作成: {user_id}")
         return session
@@ -201,6 +252,15 @@ class SessionManager:
                 expired_users.append(user_id)
                 
         for user_id in expired_users:
+            # TaskChainManagerのリセット
+            session = self.active_sessions.get(user_id)
+            if session and session.task_chain_manager:
+                try:
+                    session.task_chain_manager.reset()
+                    logger.info(f"🧹 [セッション管理] TaskChainManagerをリセット: {user_id}")
+                except Exception as e:
+                    logger.error(f"❌ [セッション管理] TaskChainManagerリセットエラー: {str(e)}")
+            
             self.clear_session(user_id, reason="timeout")
             
         if expired_users:

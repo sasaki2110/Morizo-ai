@@ -36,16 +36,26 @@ def estimate_tokens(text: str) -> int:
 class TrueReactAgent:
     """真のReActエージェントクラス"""
     
-    def __init__(self, openai_client: OpenAI):
+    def __init__(self, openai_client: OpenAI, sse_session_id: Optional[str] = None):
         self.client = openai_client
         self.planner = ActionPlanner(openai_client)
         self.task_manager = TaskManager()
         self.max_react_cycles = 10  # 最大ReActサイクル数
+        self.sse_session_id = sse_session_id
         
         # Phase 4.4: 確認プロセス用のコンポーネント
         self.ambiguity_detector = AmbiguityDetector()
         self.confirmation_processor = ConfirmationProcessor()
-        self.task_chain_manager = TaskChainManager()
+        logger.info(f"📡 [TrueReactAgent] TaskChainManager初期化: sse_session_id={sse_session_id}")
+        self.task_chain_manager = TaskChainManager(sse_session_id)
+    
+    def set_sse_session_id(self, sse_session_id: str):
+        """SSEセッションIDを設定"""
+        logger.info(f"📡 [TrueReactAgent] SSEセッションID設定開始: {sse_session_id}")
+        self.sse_session_id = sse_session_id
+        logger.info(f"📡 [TrueReactAgent] TaskChainManagerにSSEセッションID設定: {sse_session_id}")
+        self.task_chain_manager.set_sse_session_id(sse_session_id)
+        logger.info(f"📡 [TrueReactAgent] SSEセッションID設定: {sse_session_id}")
     
     async def process_request(self, user_request: str, user_session, available_tools: List[str]) -> str:
         """
@@ -113,6 +123,9 @@ class TrueReactAgent:
                 
                     # タスクを実行中にマーク
                     self.task_manager.mark_task_in_progress(current_task)
+                    
+                    # ストリーミング対応: タスクチェーンマネージャーに進捗を更新
+                    self.task_chain_manager.update_task_progress(task_id, "in_progress")
                 
                     # ReActステップを実行（Phase B: データフロー対応）
                     result = await self._react_step(current_task, user_session, completed_tasks)
@@ -120,9 +133,13 @@ class TrueReactAgent:
                     if result.get("success"):
                         self.task_manager.mark_task_completed(current_task, result)
                         completed_tasks[task_id] = result
+                        # ストリーミング対応: タスク完了を進捗に反映
+                        self.task_chain_manager.update_task_progress(task_id, "completed")
                         logger.info(f"✅ [真のReAct] タスク {task_id} 完了")
                     else:
                         self.task_manager.mark_task_failed(current_task, result.get("error"))
+                        # ストリーミング対応: タスク失敗を進捗に反映
+                        self.task_chain_manager.update_task_progress(task_id, "failed")
                         logger.error(f"❌ [真のReAct] タスク {task_id} 失敗: {result.get('error')}")
                 else:
                     # 複数タスクの場合は並列実行
@@ -130,7 +147,13 @@ class TrueReactAgent:
                     completed_tasks.update(group_results)
             
             # Phase 4: 完了報告
-            return await self._generate_completion_report(user_request, completed_tasks)
+            final_response = await self._generate_completion_report(user_request, completed_tasks)
+            
+            # SSE送信: タスクチェーン完了
+            if self.sse_session_id:
+                self.task_chain_manager.mark_complete({"total_tasks": len(tasks), "response": final_response})
+            
+            return final_response
             
         except UserConfirmationRequired as e:
             # Phase 4.4: ユーザー確認が必要な場合は例外を再発生
@@ -138,6 +161,8 @@ class TrueReactAgent:
             raise e
         except Exception as e:
             logger.error(f"❌ [真のReAct] 処理エラー: {str(e)}")
+            # ストリーミング対応: エラーを進捗に反映
+            self.task_chain_manager.update_task_progress("system", "error")
             return f"申し訳ありません。処理中にエラーが発生しました: {str(e)}"
     
     def _resolve_dependencies(self, tasks: List[Task]) -> List[str]:
@@ -273,6 +298,11 @@ class TrueReactAgent:
         # 各タスクのReActステップを並列実行
         async def execute_single_task(task: Task) -> tuple[str, Dict[str, Any]]:
             logger.info(f"🔄 [並列実行] タスク開始: {task.id}")
+            
+            # ストリーミング対応: タスク実行中にマーク
+            self.task_manager.mark_task_in_progress(task)
+            self.task_chain_manager.update_task_progress(task.id, "in_progress")
+            
             result = await self._react_step(task, user_session, completed_tasks)
             logger.info(f"✅ [並列実行] タスク完了: {task.id}")
             return task.id, result
@@ -290,9 +320,13 @@ class TrueReactAgent:
                 task = next(t for t in tasks if t.id == task_id)
                 if result.get("success"):
                     self.task_manager.mark_task_completed(task, result)
+                    # ストリーミング対応: タスク完了を進捗に反映
+                    self.task_chain_manager.update_task_progress(task_id, "completed")
                     logger.info(f"✅ [並列実行] タスク {task_id} 完了")
                 else:
                     self.task_manager.mark_task_failed(task, result.get("error"))
+                    # ストリーミング対応: タスク失敗を進捗に反映
+                    self.task_chain_manager.update_task_progress(task_id, "failed")
                     logger.error(f"❌ [並列実行] タスク {task_id} 失敗: {result.get('error')}")
             
             logger.info(f"🎉 [並列実行] {len(task_ids)}個のタスクが並列実行完了")
@@ -305,17 +339,27 @@ class TrueReactAgent:
             result_dict = {}
             for task in parallel_tasks:
                 try:
+                    # ストリーミング対応: タスク実行中にマーク
+                    self.task_manager.mark_task_in_progress(task)
+                    self.task_chain_manager.update_task_progress(task.id, "in_progress")
+                    
                     result = await self._react_step(task, user_session, completed_tasks)
                     result_dict[task.id] = result
                     
                     if result.get("success"):
                         self.task_manager.mark_task_completed(task, result)
+                        # ストリーミング対応: タスク完了を進捗に反映
+                        self.task_chain_manager.update_task_progress(task.id, "completed")
                     else:
                         self.task_manager.mark_task_failed(task, result.get("error"))
+                        # ストリーミング対応: タスク失敗を進捗に反映
+                        self.task_chain_manager.update_task_progress(task.id, "failed")
                 except Exception as task_error:
                     logger.error(f"❌ [並列実行] 個別実行エラー {task.id}: {str(task_error)}")
                     result_dict[task.id] = {"success": False, "error": str(task_error)}
                     self.task_manager.mark_task_failed(task, str(task_error))
+                    # ストリーミング対応: タスク失敗を進捗に反映
+                    self.task_chain_manager.update_task_progress(task.id, "failed")
             
             return result_dict
     

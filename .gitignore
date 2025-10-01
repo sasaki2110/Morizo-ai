@@ -238,3 +238,6 @@ morizo_ai.*
 
 # Serena AI Assistant
 .serena/
+
+# フロントとのドキュメント連携用
+SSE*.md
