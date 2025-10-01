@@ -194,7 +194,7 @@ class SessionManager:
         self.active_sessions: Dict[str, SessionContext] = {}
         self.session_timeout = session_timeout_minutes
         
-    def get_or_create_session(self, user_id: str, token: str = None) -> SessionContext:
+    def get_or_create_session(self, user_id: str, token: str = None, sse_session_id: str = None) -> SessionContext:
         """セッションを取得または作成"""
         # 既存セッションをチェック
         if user_id in self.active_sessions:
@@ -204,6 +204,10 @@ class SessionManager:
                 # トークンを更新
                 if token:
                     session.token = token
+                # SSEセッションIDを設定
+                if sse_session_id and hasattr(session, 'react_agent') and session.react_agent:
+                    logger.info(f"📡 [セッション管理] 既存セッションにSSEセッションID設定: {sse_session_id}")
+                    session.react_agent.set_sse_session_id(sse_session_id)
                 return session
             else:
                 # タイムアウトしたセッションをクリア
@@ -219,9 +223,11 @@ class SessionManager:
             from openai import OpenAI
             
             openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-            session.react_agent = TrueReactAgent(openai_client)
+            session.react_agent = TrueReactAgent(openai_client, sse_session_id)
             session.task_chain_manager = session.react_agent.task_chain_manager
             logger.info(f"🤖 [セッション管理] TrueReactAgent初期化完了: {user_id}")
+            if sse_session_id:
+                logger.info(f"📡 [セッション管理] 新規セッションにSSEセッションID設定: {sse_session_id}")
         except Exception as e:
             logger.error(f"❌ [セッション管理] TrueReactAgent初期化エラー: {str(e)}")
             # エラーが発生してもセッションは作成する

@@ -24,11 +24,15 @@ async def process_with_unified_react(request: ChatRequest, user_session, raw_tok
     try:
         logger.info("🤖 [統一ReActエージェント] 処理開始")
         
-        # OpenAIクライアントの初期化
-        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        
-        # 真のReActエージェントの初期化（SSEセッションID対応）
-        true_react_agent = TrueReactAgent(client, sse_session_id)
+        # セッション管理のTrueReactAgentを使用（SSEセッションID対応）
+        if hasattr(user_session, 'react_agent') and user_session.react_agent:
+            true_react_agent = user_session.react_agent
+            logger.info("📡 [統一ReActエージェント] セッション管理のTrueReactAgentを使用")
+        else:
+            # フォールバック: 新しいTrueReactAgentを作成
+            client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            true_react_agent = TrueReactAgent(client, sse_session_id)
+            logger.info("📡 [統一ReActエージェント] 新しいTrueReactAgentを作成")
         
         # MCPから動的にツール一覧を取得
         available_tools = await get_available_tools_from_mcp()
@@ -103,7 +107,7 @@ async def handle_chat_request(request: ChatRequest, auth_data, sse_session_id: s
         
         # === セッション管理 ===
         logger.info(f"🔍 [CHAT_HANDLER] セッション管理開始")
-        user_session = session_manager.get_or_create_session(current_user.id, raw_token)
+        user_session = session_manager.get_or_create_session(current_user.id, raw_token, sse_session_id)
         logger.info(f"📱 [セッション] セッションID: {user_session.session_id}")
         logger.info(f"📱 [セッション] 継続時間: {user_session.get_session_duration().total_seconds()/60:.1f}分")
         logger.info(f"📱 [セッション] 操作履歴: {len(user_session.operation_history)}件")
