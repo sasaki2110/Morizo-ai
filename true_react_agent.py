@@ -826,6 +826,12 @@ class TrueReactAgent:
             
             # 1. 並列提示システム対応のレスポンス生成
             final_response = await self._generate_final_response(completed_tasks, {})
+
+            # 献立提案以外の通常タスクの場合、LLMで応答を整形する
+            if not final_response.strip():
+                logger.info("🔄 [完了報告] 献立提案以外の結果のため、LLMによる整形を実行します。")
+                task_results = self._collect_task_results_from_completed(completed_tasks)
+                final_response = await self._generate_final_response_with_llm(user_request, task_results)
             
             logger.info(f"✅ [完了報告] ユーザー要求: {user_request}")
             return final_response
@@ -1401,18 +1407,10 @@ class TrueReactAgent:
                         final_response += "\n"
             
             # 詳細な結果があるが、献立・レシピデータでない場合
-            if detailed_results and not menu_data and not recipe_data:
+            if detailed_results and not llm_menu_data and not rag_menu_data and not web_recipe_data:
                 for detail in detailed_results:
                     if isinstance(detail, str) and len(detail.strip()) > 0:
                         final_response += detail + "\n\n"
-            
-            # 処理完了のサマリーを追加
-            if results_summary:
-                if not final_response.strip():
-                    final_response += "処理が完了しました。\n\n"
-                final_response += "\n".join(results_summary)
-            elif not final_response.strip():
-                final_response += "処理が完了しました。"
             
             return final_response.strip()
             
