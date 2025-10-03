@@ -19,7 +19,7 @@ CREATE TABLE inventory (
 );
 
 -- 料理履歴テーブル（過去に作ったレシピの保存）
-CREATE TABLE recipes (
+CREATE TABLE recipe_historys (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
     title VARCHAR(255) NOT NULL,
@@ -49,8 +49,8 @@ CREATE TABLE user_settings (
 CREATE INDEX idx_inventory_user_id ON inventory(user_id);
 CREATE INDEX idx_inventory_item_name ON inventory(item_name);
 CREATE INDEX idx_inventory_storage_location ON inventory(storage_location);
-CREATE INDEX idx_recipes_user_id ON recipes(user_id);
-CREATE INDEX idx_recipes_title ON recipes(title);
+CREATE INDEX idx_recipe_historys_user_id ON recipe_historys(user_id);
+CREATE INDEX idx_recipe_historys_title ON recipe_historys(title);
 
 -- 更新日時自動更新のトリガー
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -64,7 +64,7 @@ $$ language 'plpgsql';
 CREATE TRIGGER update_inventory_updated_at BEFORE UPDATE ON inventory
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER update_recipes_updated_at BEFORE UPDATE ON recipes
+CREATE TRIGGER update_recipe_historys_updated_at BEFORE UPDATE ON recipe_historys
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 CREATE TRIGGER update_user_settings_updated_at BEFORE UPDATE ON user_settings
@@ -76,7 +76,7 @@ CREATE TRIGGER update_user_settings_updated_at BEFORE UPDATE ON user_settings
 ```sql
 -- RLS有効化
 ALTER TABLE inventory ENABLE ROW LEVEL SECURITY;
-ALTER TABLE recipes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE recipe_historys ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_settings ENABLE ROW LEVEL SECURITY;
 
 -- ポリシー作成（ユーザーは自分のデータのみアクセス可能）
@@ -92,17 +92,17 @@ CREATE POLICY "Users can update own inventory" ON inventory
 CREATE POLICY "Users can delete own inventory" ON inventory
     FOR DELETE USING (auth.uid() = user_id);
 
--- recipesテーブル用ポリシー
-CREATE POLICY "Users can view own recipes" ON recipes
+-- recipe_historysテーブル用ポリシー
+CREATE POLICY "Users can view own recipe_historys" ON recipe_historys
     FOR SELECT USING (auth.uid() = user_id);
 
-CREATE POLICY "Users can insert own recipes" ON recipes
+CREATE POLICY "Users can insert own recipe_historys" ON recipe_historys
     FOR INSERT WITH CHECK (auth.uid() = user_id);
 
-CREATE POLICY "Users can update own recipes" ON recipes
+CREATE POLICY "Users can update own recipe_historys" ON recipe_historys
     FOR UPDATE USING (auth.uid() = user_id);
 
-CREATE POLICY "Users can delete own recipes" ON recipes
+CREATE POLICY "Users can delete own recipe_historys" ON recipe_historys
     FOR DELETE USING (auth.uid() = user_id);
 
 -- user_settingsテーブル用ポリシー
@@ -134,7 +134,7 @@ CREATE POLICY "Users can delete own settings" ON user_settings
 - **storage_location**: 保管場所（冷蔵庫、冷凍庫、常温倉庫、野菜室等）
 - **expiry_date**: 消費期限
 
-### recipes テーブル（料理履歴）
+### recipe_historys テーブル（料理履歴）
 - **title**: レシピタイトル
 - **source**: レシピの出典（web, rag, manual）
 - **url**: レシピのURL（Web検索で見つけた場合）

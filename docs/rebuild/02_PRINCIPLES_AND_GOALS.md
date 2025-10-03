@@ -85,22 +85,27 @@
 
 ## 🚀 実装戦略
 
-### **Phase 1: コア機能**
+### **Phase 1: ロギング戦略**
+- 基本的なロギング設定
+- 階層別ログ出力
+- ログローテーション機能
+
+### **Phase 2: コア機能**
 - TrueReactAgent（統一エージェント）
 - ActionPlanner（タスク計画）
 - TaskExecutor（タスク実行）
 
-### **Phase 2: サービス層**
+### **Phase 3: サービス層**
 - RecipeService（レシピ関連サービス）
 - InventoryService（在庫管理サービス）
 - SessionService（セッション管理サービス）
 
-### **Phase 3: MCP層**
-- RecipeMCP（レシピMCP）
-- DBMCP（データベースMCP）
-- InventoryMCP（在庫MCP）
+### **Phase 4: MCP層**
+- InventoryMCP（在庫管理MCP - `inventory`テーブルのCRUD）
+- RecipeHistoryMCP（レシピ履歴MCP - `recipe_historys`テーブルのCRUD）
+- RecipeMCP（レシピ提案MCP）
 
-### **Phase 4: API層**
+### **Phase 5: API層**
 - FastAPIアプリケーション
 - ルート定義
 - ミドルウェア

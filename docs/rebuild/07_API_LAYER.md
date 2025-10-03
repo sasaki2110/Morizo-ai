@@ -42,11 +42,17 @@ Client (HTTP Request)
     ↓
 API Layer (FastAPI)
     ↓
-Service Layer (各サービス)
-    ↓
 Core Layer (TrueReactAgent)
+    ↓ (Service.Method Call)
+Service Layer (各サービス -> MCPClient)
+    ↓ (Tool Name Call)
+MCP Layer (各MCPツール)
+    ↓ (DB Access, API Call)
+External Systems (DB, 外部API)
     ↓
-Response (HTTP Response)
+(各層を逆順に経由してレスポンス)
+    ↓
+Client (HTTP Response)
 ```
 
 ## 🔧 APIコンポーネント
@@ -121,6 +127,7 @@ def get_session_service() -> SessionService:
 #### **主要エンドポイント**
 ```python
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from models.requests import ChatRequest
 from models.responses import ChatResponse
 
@@ -159,6 +166,58 @@ async def chat(
     except Exception as e:
         logger.error(f"Chat request failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/chat/stream/{sse_session_id}")
+async def stream_progress(
+    sse_session_id: str,
+    token: str = Depends(get_bearer_token)
+):
+    """Server-Sent Eventsによる進捗表示"""
+    try:
+        # 1. 認証の確認
+        user_info = await session_service.verify_token(token)
+        if not user_info:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        
+        # 2. SSE接続の確立
+        async def event_generator():
+            # SSESenderを取得し、このクライアント用のキューを登録
+            sse_sender = get_sse_sender(sse_session_id)
+            queue = asyncio.Queue()
+            connection_id = sse_sender.add_connection(queue)
+            
+            try:
+                while True:
+                    # キューからメッセージを取得してクライアントに送信
+                    message = await queue.get()
+                    yield f"data: {message}\n\n"
+                    if '"type": "complete"' in message or '"type": "error"' in message:
+                        break
+            finally:
+                # 接続が切れたらキューを削除
+                sse_sender.remove_connection(connection_id)
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "Cache-control"
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"SSE stream failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+#### SSE実装の仕組み
+1.  **SSESenderの役割**: `SSESender` クラスは、特定の `sse_session_id` に関連付けられたすべてのクライアント接続（キュー）を管理するシングルトンです。
+2.  **接続とキュー**: クライアントが `/chat/stream/{sse_session_id}` に接続すると、`SSESender` はそのクライアント専用の `asyncio.Queue` を作成し、管理下の接続リストに追加します。
+3.  **進捗イベントの発行**: コア層（`TaskChainManager`など）は、タスクの進捗があるたびに、`sse_session_id` を使って `SSESender` のインスタンスを取得し、`send_progress()` などのメソッドを呼び出します。
+4.  **メッセージの配信**: `SSESender` は、受け取った進捗情報を、管理しているすべてのキュー（＝接続中の全クライアント）に投入します。
+5.  **ストリーミング**: `/chat/stream` エンドポイントの `event_generator` は、自身のキューからメッセージを非同期に取得し、それをクライアントに `data: ...` の形式で送信し続けます。処理完了またはエラーのメッセージを受け取るとストリームを終了します。
 
 @router.get("/health")
 async def health_check():
@@ -292,6 +351,13 @@ class ChatRequest(BaseModel):
     token: str = Field(..., description="認証トークン")
     sse_session_id: Optional[str] = Field(None, description="SSEセッションID")
 
+class ProgressUpdate(BaseModel):
+    """進捗更新"""
+    type: str = Field(..., description="更新タイプ")
+    progress: int = Field(..., description="進捗率（0-100）")
+    message: str = Field(..., description="進捗メッセージ")
+    timestamp: str = Field(..., description="タイムスタンプ")
+
 class InventoryRequest(BaseModel):
     """在庫リクエスト"""
     item_name: str = Field(..., description="アイテム名")
@@ -401,15 +467,8 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 ### **技術面**
 - [ ] 全ファイルが100行以下
-- [ ] 責任分離の徹底
-- [ ] 疎結合設計の実現
 - [ ] 認証・認可の実装
 - [ ] バリデーションの実装
-
-### **品質面**
-- [ ] 各コンポーネントの独立動作確認
-- [ ] デバッグの容易性確認
-- [ ] 拡張性の確認
 - [ ] 保守性の確認
 
 ---
